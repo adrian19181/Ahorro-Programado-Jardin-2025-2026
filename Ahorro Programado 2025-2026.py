@@ -76,9 +76,10 @@ def fmt_porcentaje(val):
         return str(val)
 
 # ==============================================================================
-# FUNCIÓN GENERADORA DE PDF PARA ANÁLISIS POR IA (DATOS Y TABLAS NATIVAS)
+# FUNCIÓN GENERADORA DE PDF CACHEADA (OPTIMIZA VELOCIDAD DE CARGA)
 # ==============================================================================
-def generar_pdf_reporte(datos_condiciones, datos_kpi_res, datos_kpi_rend, movimientos_lista, evolucion_mensual):
+@st.cache_data(ttl=600)
+def generar_pdf_reporte_cached(datos_condiciones, datos_kpi_res, datos_kpi_rend, movimientos_lista, evolucion_mensual):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -212,7 +213,7 @@ def generar_pdf_reporte(datos_condiciones, datos_kpi_res, datos_kpi_rend, movimi
     return buffer.getvalue()
 
 # ==============================================================================
-# ENCABEZADO PRINCIPAL Y RECARGA / EXPORTAR PDF
+# ENCABEZADO PRINCIPAL Y RECARGA
 # ==============================================================================
 col_title, col_btn1, col_btn2 = st.columns([3, 1, 1])
 with col_title:
@@ -394,7 +395,6 @@ if wb is not None:
     ratio_ganancia_calc = (d2_num / d6_num) if d6_num > 0 else 0.0
 
     # CÁLCULO DE KPIS ADICIONALES
-    # 1. Interés sobre Interés (Ganancia por Interés Compuesto)
     chart_intereses_kpi = []
     r_kpi = 2
     while True:
@@ -412,15 +412,11 @@ if wb is not None:
         interes_compuesto_calc += cum_int_temp * tna_mensual
         cum_int_temp += int_m_val
 
-    # 2. Retorno por cada $100 (ROI)
     d7_num = float(d7) if isinstance(d7, (int, float)) else (d2_num / d5_num if d5_num > 0 else 0.0)
     d7_pct = d7_num * 100.0 if d7_num <= 1.0 else d7_num
     retorno_100_val = f"${d7_pct:.2f}".replace(".", ",")
-
-    # 3. Ganancia por $100 del Fondo (Ratio)
     ratio_100_val = f"${ratio_ganancia_calc * 100.0:.2f}".replace(".", ",")
 
-    # 4. Productividad por cada $1.000 Depositados
     b19_num = float(b19) if isinstance(b19, (int, float)) else 0.0
     d16_num = float(d16) if isinstance(d16, (int, float)) else 0.0
     prod_diaria_1000 = (b19_num / (d16_num / 1000.0)) if d16_num > 0 else (tna_dec / 360.0) * 1000.0
@@ -672,7 +668,6 @@ if wb is not None:
     tabla_movs_body = "".join(rows_html)
 
     html_movs_completo = f"""<style>
-/* Contenedor principal con scroll */
 .tbl-scroll-wrapper {{
     max-height: 480px;
     width: 100%;
@@ -685,27 +680,21 @@ if wb is not None:
     margin-top: 10px;
     margin-bottom: 25px;
     display: block;
-    position: relative; /* Contiene el contexto sticky */
+    position: relative;
 }}
-
-/* Configuracion estricta de la tabla */
 .tbl-sticky-movs {{
     width: 100%;
-    border-collapse: separate !important; /* Vital para sticky */
+    border-collapse: separate !important;
     border-spacing: 0 !important;
     font-family: Calibri, 'Segoe UI', Arial, sans-serif;
     font-size: 12px;
     color: #000000;
     margin: 0;
 }}
-
-/* ---------------------------------------------------
-   ENCABEZADOS (TH)
---------------------------------------------------- */
 .tbl-sticky-movs th {{
     position: sticky !important;
-    top: 0 !important; /* Pegajoso verticalmente */
-    z-index: 20 !important; /* Capa superior a los datos */
+    top: 0 !important;
+    z-index: 20 !important;
     background-color: #1F2937 !important;
     color: #ffffff !important;
     border-right: 1px solid #000000 !important;
@@ -717,24 +706,17 @@ if wb is not None:
     white-space: nowrap !important;
     min-width: 90px;
 }}
-
-/* La esquina superior izquierda debe estar por encima de todo */
 .tbl-sticky-movs th:first-child {{
     position: sticky !important;
     top: 0 !important;
     left: 0 !important;
-    z-index: 50 !important; /* Capa más alta */
+    z-index: 50 !important;
     width: 125px !important;
     min-width: 125px !important;
     max-width: 125px !important;
     box-shadow: 2px 0 5px rgba(0,0,0,0.2) !important;
 }}
-
-/* ---------------------------------------------------
-   CELDAS DE DATOS NORMALES (TD)
---------------------------------------------------- */
 .tbl-sticky-movs td {{
-    /* ¡NO usar relative ni z-index aqui! */
     border-right: 1px solid #000000 !important;
     border-bottom: 1px solid #000000 !important;
     padding: 6px 8px !important;
@@ -743,14 +725,10 @@ if wb is not None:
     white-space: nowrap !important;
     min-width: 90px;
 }}
-
-/* ---------------------------------------------------
-   COLUMNA 1 (FECHAS) - FIJA A LA IZQUIERDA
---------------------------------------------------- */
 .lbl-sticky-col {{
     position: sticky !important;
-    left: 0 !important; /* Pegajoso horizontalmente */
-    z-index: 30 !important; /* Flota sobre las celdas de datos normales, por debajo del header */
+    left: 0 !important;
+    z-index: 30 !important;
     font-weight: bold !important;
     width: 125px !important;
     min-width: 125px !important;
@@ -758,11 +736,6 @@ if wb is not None:
     box-shadow: 3px 0 6px rgba(0,0,0,0.3) !important;
     background-clip: padding-box !important;
 }}
-
-/* ---------------------------------------------------
-   CLASES DE COLORES (Aplicadas al TR)
-   Forzamos el color de fondo para TD normales y el sticky
---------------------------------------------------- */
 .row-blue td {{ background-color: #B4C6E7 !important; }}
 .row-blue .lbl-sticky-col {{ background-color: #B4C6E7 !important; }}
 
@@ -774,7 +747,6 @@ if wb is not None:
 
 .row-white td {{ background-color: #FFFFFF !important; }}
 .row-white .lbl-sticky-col {{ background-color: #FFFFFF !important; }}
-
 </style>
 <div class="tbl-scroll-wrapper">
 <table class="tbl-sticky-movs">
@@ -804,16 +776,15 @@ if wb is not None:
     # ==============================================================================
     st.subheader("📊 Evolución de Saldo e Intereses Mensuales")
 
-    # 4.1 LECTURA DE RESUMEN MENSUAL (AC:AG)
     chart_dates = []
     chart_saldos = []
     chart_intereses = []
 
-    r_chart = 2 # Fila inicio en tabla resumen mensual (AC2:AG14)
+    r_chart = 2
     while True:
-        f_cobro = sheet.cell(row=r_chart, column=29).value # Col AC (Fecha Cobro Intereses)
-        saldo_fin = sheet.cell(row=r_chart, column=30).value # Col AD (Saldo Fin mes)
-        int_mes = sheet.cell(row=r_chart, column=33).value # Col AG (Interés Mensual)
+        f_cobro = sheet.cell(row=r_chart, column=29).value
+        saldo_fin = sheet.cell(row=r_chart, column=30).value
+        int_mes = sheet.cell(row=r_chart, column=33).value
 
         if f_cobro is None or str(f_cobro).strip() == "":
             break
@@ -827,13 +798,10 @@ if wb is not None:
         chart_intereses.append(int_mes_val)
         r_chart += 1
 
-    # 4.2 CÁLCULO DE INTERÉS DIARIO PROMEDIO POR MES (COL A Y R CON FALLBACK)
     daily_int_by_month = {}
-    
-    # Intento 1: Leer directamente desde Columna A (1) y Columna R (18)
     for r_d in range(2, sheet.max_row + 1):
-        f_val = sheet.cell(row=r_d, column=1).value  # Col A (Fechas)
-        r_val = sheet.cell(row=r_d, column=18).value # Col R (Interés Diario)
+        f_val = sheet.cell(row=r_d, column=1).value
+        r_val = sheet.cell(row=r_d, column=18).value
 
         if f_val is None or str(f_val).strip() == "":
             continue
@@ -858,7 +826,6 @@ if wb is not None:
                 daily_int_by_month[m_key] = []
             daily_int_by_month[m_key].append(num_val)
 
-    # Intento 2 (Fallback): Si las fórmulas en Col A/R no tienen valor en caché, usas movimientos
     if not daily_int_by_month and movements:
         for m in movements:
             f_val = m['fecha']
@@ -882,9 +849,9 @@ if wb is not None:
     cum_int_list = np.cumsum(chart_intereses).tolist() if chart_intereses else []
 
     # ==============================================================================
-    # EXPORTACIÓN PDF CON TABLAS Y DATOS NATIVOS
+    # EXPORTACIÓN PDF OPTIMIZADA CON CACHÉ
     # ==============================================================================
-    datos_pdf_condiciones = [
+    datos_pdf_condiciones = (
         ("Tasa Nominal Anual", f"{tna_val:.2f}%"),
         ("Tasa Diaria", val_diaria_str),
         ("Fecha Inicio", fecha_ini_str),
@@ -894,17 +861,17 @@ if wb is not None:
         ("Valor Aporte Mensual", f"${val_aporte_str}"),
         ("Día de Aporte Mensual", str(dia_aporte)),
         ("Meses y Días Reales", f"{meses_real} Meses, {dias_real} Días")
-    ]
+    )
 
-    datos_pdf_kpi_res = [
+    datos_pdf_kpi_res = (
         ("Total Interés Ganados", fmt_moneda(d2)),
         ("Total Depósitos Mensuales", fmt_moneda(d3)),
         ("Total Depósitos Personales", fmt_moneda(d4)),
         ("Total Depositado (sin Int.)", fmt_moneda(d5)),
         ("Total Ganado Incluido Intereses", fmt_moneda(d6))
-    ]
+    )
 
-    datos_pdf_kpi_rend = [
+    datos_pdf_kpi_rend = (
         ("TIR (Tasa Int. Retorno)", fmt_porcentaje(b7)),
         ("TEA (Tasa Efe. Anual)", fmt_porcentaje(tea_calc)),
         ("ROI Rentabilidad Acumulada", fmt_porcentaje(d7)),
@@ -916,41 +883,32 @@ if wb is not None:
         ("Saldo Fin Mes Prom. Pond.", fmt_moneda(d16)),
         ("Aportes Personales Prom.", fmt_moneda(d19)),
         ("Interés Diario Promedio", fmt_moneda(b19))
-    ]
+    )
 
-    evolucion_mensual_pdf = []
-    for idx in range(len(chart_dates)):
-        f_dt = chart_dates[idx]
-        s_val = chart_saldos[idx] if idx < len(chart_saldos) else 0.0
-        i_val = chart_intereses[idx] if idx < len(chart_intereses) else 0.0
-        d_val = avg_daily_vals[idx] if idx < len(avg_daily_vals) else 0.0
-        c_val = cum_int_list[idx] if idx < len(cum_int_list) else 0.0
-        evolucion_mensual_pdf.append({
-            "fecha": f_dt,
-            "saldo": fmt_moneda(s_val),
-            "int_mensual": fmt_moneda(i_val),
-            "int_diario_prom": fmt_moneda(d_val),
-            "int_acumulado": fmt_moneda(c_val)
-        })
+    evolucion_mensual_pdf = tuple(
+        {
+            "fecha": chart_dates[idx],
+            "saldo": fmt_moneda(chart_saldos[idx] if idx < len(chart_saldos) else 0.0),
+            "int_mensual": fmt_moneda(chart_intereses[idx] if idx < len(chart_intereses) else 0.0),
+            "int_diario_prom": fmt_moneda(avg_daily_vals[idx] if idx < len(avg_daily_vals) else 0.0),
+            "int_acumulado": fmt_moneda(cum_int_list[idx] if idx < len(cum_int_list) else 0.0)
+        }
+        for idx in range(len(chart_dates))
+    )
 
-    movimientos_pdf_lista = []
-    for m in movements:
-        dt_str = m['fecha'].strftime('%d/%m/%Y') if hasattr(m['fecha'], 'strftime') else str(m['fecha'])
-        dep_m_str = fmt_moneda(m['dep_m']) if m['dep_m'] > 0 else "$0,00"
-        dep_p_str = fmt_moneda(m['dep_p']) if m['dep_p'] > 0 else "$0,00"
-        saldo_str = fmt_moneda(m['saldo_acum'])
-        int_d_str = f"${m['int_diario']:.2f}".replace(".", ",")
-        int_m_str = fmt_moneda(m['int_m']) if m['int_m'] is not None else ""
-        movimientos_pdf_lista.append({
-            "dt_str": dt_str,
-            "dep_m_str": dep_m_str,
-            "dep_p_str": dep_p_str,
-            "saldo_str": saldo_str,
-            "int_d_str": int_d_str,
-            "int_m_str": int_m_str
-        })
+    movimientos_pdf_lista = tuple(
+        {
+            "dt_str": m['fecha'].strftime('%d/%m/%Y') if hasattr(m['fecha'], 'strftime') else str(m['fecha']),
+            "dep_m_str": fmt_moneda(m['dep_m']) if m['dep_m'] > 0 else "$0,00",
+            "dep_p_str": fmt_moneda(m['dep_p']) if m['dep_p'] > 0 else "$0,00",
+            "saldo_str": fmt_moneda(m['saldo_acum']),
+            "int_d_str": f"${m['int_diario']:.2f}".replace(".", ","),
+            "int_m_str": fmt_moneda(m['int_m']) if m['int_m'] is not None else ""
+        }
+        for m in movements
+    )
 
-    pdf_bytes = generar_pdf_reporte(
+    pdf_bytes = generar_pdf_reporte_cached(
         datos_pdf_condiciones,
         datos_pdf_kpi_res,
         datos_pdf_kpi_rend,
@@ -1096,7 +1054,7 @@ if wb is not None:
                 x=cum_int,
                 y=chart_dates,
                 orientation='h',
-                marker_color='#10B981', # Verde Esmeralda
+                marker_color='#10B981',
                 text=labels_cum,
                 textposition=pos_cum,
                 textfont=dict(size=11),
