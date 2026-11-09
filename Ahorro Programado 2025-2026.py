@@ -1,11 +1,16 @@
 import sys
 import io
+import datetime
 import requests
 import openpyxl
 import pandas as pd
 import numpy as np
 import streamlit as st
 import plotly.graph_objects as go
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
 # ==============================================================================
 # AUTORUNNER: FUNCIONA TANTO LOCALMENTE COMO EN STREAMLIT CLOUD
@@ -71,14 +76,150 @@ def fmt_porcentaje(val):
         return str(val)
 
 # ==============================================================================
-# ENCABEZADO PRINCIPAL Y RECARGA
+# FUNCIÓN GENERADORA DE PDF PARA ANÁLISIS POR IA (DATOS Y TABLAS NATIVAS)
 # ==============================================================================
-col_title, col_btn = st.columns([4, 1])
+def generar_pdf_reporte(datos_condiciones, datos_kpi_res, datos_kpi_rend, movimientos_lista, evolucion_mensual):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=30,
+        leftMargin=30,
+        topMargin=30,
+        bottomMargin=30
+    )
+    story = []
+    styles = getSampleStyleSheet()
+
+    style_title = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontSize=16, leading=18, textColor=colors.HexColor('#1F2937'), spaceAfter=4)
+    style_sub = ParagraphStyle('DocSub', parent=styles['Normal'], fontSize=9, leading=11, textColor=colors.HexColor('#4B5563'), spaceAfter=10)
+    style_h2 = ParagraphStyle('DocH2', parent=styles['Heading2'], fontSize=11, leading=13, textColor=colors.HexColor('#1E3A8A'), spaceBefore=8, spaceAfter=4)
+    style_cell = ParagraphStyle('DocCell', parent=styles['Normal'], fontSize=7.5, leading=9, textColor=colors.HexColor('#000000'))
+    style_cell_bold = ParagraphStyle('DocCellBold', parent=style_cell, fontName='Helvetica-Bold')
+    style_cell_header = ParagraphStyle('DocCellHeader', parent=style_cell, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
+
+    fecha_hoy = datetime.date.today().strftime('%d/%m/%Y')
+    story.append(Paragraph("💰 Ahorro Programado Jardín 2025-2026", style_title))
+    story.append(Paragraph(f"Reporte Consolidado de Datos y Rendimientos | Fecha de exportación: {fecha_hoy}", style_sub))
+
+    # 1. CONDICIONES
+    story.append(Paragraph("📋 1. Condiciones del Ahorro Programado", style_h2))
+    t_cond_data = [[Paragraph("Concepto", style_cell_header), Paragraph("Valor", style_cell_header)]]
+    for k, v in datos_condiciones:
+        t_cond_data.append([Paragraph(str(k), style_cell_bold), Paragraph(str(v), style_cell)])
+    t_cond = Table(t_cond_data, colWidths=[220, 332])
+    t_cond.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1F2937')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#000000')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 3),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+    ]))
+    story.append(t_cond)
+    story.append(Spacer(1, 8))
+
+    # 2. KPI RESULTADOS
+    story.append(Paragraph("📊 2. KPI Resultados", style_h2))
+    t_res_data = [[Paragraph("Indicador", style_cell_header), Paragraph("Valor", style_cell_header)]]
+    for k, v in datos_kpi_res:
+        t_res_data.append([Paragraph(str(k), style_cell_bold), Paragraph(str(v), style_cell)])
+    t_res = Table(t_res_data, colWidths=[220, 332])
+    t_res.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1F2937')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#000000')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 3),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+    ]))
+    story.append(t_res)
+    story.append(Spacer(1, 8))
+
+    # 3. KPI RENDIMIENTOS
+    story.append(Paragraph("📈 3. KPI Rendimientos", style_h2))
+    t_rend_data = [[Paragraph("Indicador / Métrica", style_cell_header), Paragraph("Valor", style_cell_header)]]
+    for k, v in datos_kpi_rend:
+        t_rend_data.append([Paragraph(str(k), style_cell_bold), Paragraph(str(v), style_cell)])
+    t_rend = Table(t_rend_data, colWidths=[220, 332])
+    t_rend.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1F2937')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#000000')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 3),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+    ]))
+    story.append(t_rend)
+    story.append(Spacer(1, 8))
+
+    # 4. EVOLUCIÓN MENSUAL (DATOS DE GRÁFICOS)
+    story.append(Paragraph("📉 4. Evolución Mensual de Saldos e Intereses", style_h2))
+    t_ev_data = [[
+        Paragraph("Fecha", style_cell_header),
+        Paragraph("Saldo Fin Mes", style_cell_header),
+        Paragraph("Interés Mensual", style_cell_header),
+        Paragraph("Int. Diario Prom.", style_cell_header),
+        Paragraph("Int. Acumulado", style_cell_header)
+    ]]
+    for item in evolucion_mensual:
+        t_ev_data.append([
+            Paragraph(item["fecha"], style_cell),
+            Paragraph(item["saldo"], style_cell),
+            Paragraph(item["int_mensual"], style_cell),
+            Paragraph(item["int_diario_prom"], style_cell),
+            Paragraph(item["int_acumulado"], style_cell)
+        ])
+    t_ev = Table(t_ev_data, colWidths=[80, 115, 115, 120, 122])
+    t_ev.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1F2937')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#000000')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 3),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+    ]))
+    story.append(t_ev)
+    story.append(Spacer(1, 8))
+
+    # 5. TABLA RESUMEN DE MOVIMIENTOS
+    story.append(Paragraph("📑 5. Tabla Resumen de Movimientos", style_h2))
+    t_mov_data = [[
+        Paragraph("Fecha", style_cell_header),
+        Paragraph("Dep. Mensual", style_cell_header),
+        Paragraph("Dep. Personales", style_cell_header),
+        Paragraph("Saldo Acumulado", style_cell_header),
+        Paragraph("Int. Diario", style_cell_header),
+        Paragraph("Int. Mensual", style_cell_header)
+    ]]
+    for m in movimientos_lista:
+        t_mov_data.append([
+            Paragraph(m["dt_str"], style_cell_bold),
+            Paragraph(m["dep_m_str"], style_cell),
+            Paragraph(m["dep_p_str"], style_cell),
+            Paragraph(m["saldo_str"], style_cell),
+            Paragraph(m["int_d_str"], style_cell),
+            Paragraph(m["int_m_str"], style_cell_bold if m["int_m_str"] else style_cell)
+        ])
+    t_mov = Table(t_mov_data, colWidths=[70, 95, 95, 105, 95, 92])
+    t_mov.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1F2937')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#000000')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 2.5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 2.5),
+    ]))
+    story.append(t_mov)
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+# ==============================================================================
+# ENCABEZADO PRINCIPAL Y RECARGA / EXPORTAR PDF
+# ==============================================================================
+col_title, col_btn1, col_btn2 = st.columns([3, 1, 1])
 with col_title:
     st.title("💰 Ahorro Programado Jardín 2025-2026")
     st.caption("Sincronizado en tiempo real desde Google Drive")
 
-with col_btn:
+with col_btn1:
     if st.button("🔄 Recargar", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
@@ -737,6 +878,95 @@ if wb is not None:
         avg_val = sum(vals) / len(vals) if vals else 0.0
         avg_daily_dates.append(start_month_str)
         avg_daily_vals.append(avg_val)
+
+    cum_int_list = np.cumsum(chart_intereses).tolist() if chart_intereses else []
+
+    # ==============================================================================
+    # EXPORTACIÓN PDF CON TABLAS Y DATOS NATIVOS
+    # ==============================================================================
+    datos_pdf_condiciones = [
+        ("Tasa Nominal Anual", f"{tna_val:.2f}%"),
+        ("Tasa Diaria", val_diaria_str),
+        ("Fecha Inicio", fecha_ini_str),
+        ("Plazo Meses", str(plazo_meses)),
+        ("Fecha Fin", fecha_fin_str),
+        ("Total de Días", str(total_dias)),
+        ("Valor Aporte Mensual", f"${val_aporte_str}"),
+        ("Día de Aporte Mensual", str(dia_aporte)),
+        ("Meses y Días Reales", f"{meses_real} Meses, {dias_real} Días")
+    ]
+
+    datos_pdf_kpi_res = [
+        ("Total Interés Ganados", fmt_moneda(d2)),
+        ("Total Depósitos Mensuales", fmt_moneda(d3)),
+        ("Total Depósitos Personales", fmt_moneda(d4)),
+        ("Total Depositado (sin Int.)", fmt_moneda(d5)),
+        ("Total Ganado Incluido Intereses", fmt_moneda(d6))
+    ]
+
+    datos_pdf_kpi_rend = [
+        ("TIR (Tasa Int. Retorno)", fmt_porcentaje(b7)),
+        ("TEA (Tasa Efe. Anual)", fmt_porcentaje(tea_calc)),
+        ("ROI Rentabilidad Acumulada", fmt_porcentaje(d7)),
+        ("Ratio de Ganancia", fmt_porcentaje(ratio_ganancia_calc)),
+        ("Interés sobre Interés", fmt_moneda(interes_compuesto_calc)),
+        ("Retorno por cada $100 (ROI)", retorno_100_val),
+        ("Ganancia por $100 del Fondo (Ratio)", ratio_100_val),
+        ("Productividad por $1.000", f"{fmt_moneda(prod_diaria_1000)} / día"),
+        ("Saldo Fin Mes Prom. Pond.", fmt_moneda(d16)),
+        ("Aportes Personales Prom.", fmt_moneda(d19)),
+        ("Interés Diario Promedio", fmt_moneda(b19))
+    ]
+
+    evolucion_mensual_pdf = []
+    for idx in range(len(chart_dates)):
+        f_dt = chart_dates[idx]
+        s_val = chart_saldos[idx] if idx < len(chart_saldos) else 0.0
+        i_val = chart_intereses[idx] if idx < len(chart_intereses) else 0.0
+        d_val = avg_daily_vals[idx] if idx < len(avg_daily_vals) else 0.0
+        c_val = cum_int_list[idx] if idx < len(cum_int_list) else 0.0
+        evolucion_mensual_pdf.append({
+            "fecha": f_dt,
+            "saldo": fmt_moneda(s_val),
+            "int_mensual": fmt_moneda(i_val),
+            "int_diario_prom": fmt_moneda(d_val),
+            "int_acumulado": fmt_moneda(c_val)
+        })
+
+    movimientos_pdf_lista = []
+    for m in movements:
+        dt_str = m['fecha'].strftime('%d/%m/%Y') if hasattr(m['fecha'], 'strftime') else str(m['fecha'])
+        dep_m_str = fmt_moneda(m['dep_m']) if m['dep_m'] > 0 else "$0,00"
+        dep_p_str = fmt_moneda(m['dep_p']) if m['dep_p'] > 0 else "$0,00"
+        saldo_str = fmt_moneda(m['saldo_acum'])
+        int_d_str = f"${m['int_diario']:.2f}".replace(".", ",")
+        int_m_str = fmt_moneda(m['int_m']) if m['int_m'] is not None else ""
+        movimientos_pdf_lista.append({
+            "dt_str": dt_str,
+            "dep_m_str": dep_m_str,
+            "dep_p_str": dep_p_str,
+            "saldo_str": saldo_str,
+            "int_d_str": int_d_str,
+            "int_m_str": int_m_str
+        })
+
+    pdf_bytes = generar_pdf_reporte(
+        datos_pdf_condiciones,
+        datos_pdf_kpi_res,
+        datos_pdf_kpi_rend,
+        movimientos_pdf_lista,
+        evolucion_mensual_pdf
+    )
+
+    with col_btn2:
+        nombre_pdf = f"Ahorro_Programado_Jardin_2025-2026_{datetime.date.today().strftime('%d-%m-%Y')}.pdf"
+        st.download_button(
+            label="📄 PDF",
+            data=pdf_bytes,
+            file_name=nombre_pdf,
+            mime="application/pdf",
+            use_container_width=True
+        )
 
     # 4.3 CREACIÓN DE PESTAÑAS Y GRÁFICOS
     tab_int, tab_saldo, tab_avg, tab_cum = st.tabs([
