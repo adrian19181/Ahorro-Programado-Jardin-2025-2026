@@ -1,37 +1,25 @@
-import calendar
-import datetime
-import io
-import os
 import sys
-
-import numpy as np
+import io
+import datetime
+import requests
 import openpyxl
 import pandas as pd
-import plotly.graph_objects as go
-import requests
+import numpy as np
 import streamlit as st
-from reportlab.lib import colors
+import plotly.graph_objects as go
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.platypus import (
-    HRFlowable,
-    Image,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
-)
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, HRFlowable
 
 # ==============================================================================
 # AUTORUNNER: FUNCIONA TANTO LOCALMENTE COMO EN STREAMLIT CLOUD
 # ==============================================================================
 if __name__ == "__main__":
-  if not st.runtime.exists():
-    from streamlit.web import cli as stcli
-
-    sys.argv = ["streamlit", "run", sys.argv[0]]
-    sys.exit(stcli.main())
+    if not st.runtime.exists():
+        from streamlit.web import cli as stcli
+        sys.argv = ["streamlit", "run", sys.argv[0]]
+        sys.exit(stcli.main())
 
 # ==============================================================================
 # CONFIGURACIÓN DE PÁGINA
@@ -39,384 +27,267 @@ if __name__ == "__main__":
 st.set_page_config(
     page_title="Ahorro Programado Jardín 2025-2026",
     page_icon="💰",
-    layout="wide",
+    layout="wide"
 )
 
 DRIVE_FILE_ID = "1ke9f5XiX4b5DSuXNYXTNr9LNPUO5bUzz"
-
 
 # ==============================================================================
 # CARGAR DESDE GOOGLE DRIVE (CON CACHÉ REUTILIZABLE)
 # ==============================================================================
 @st.cache_data(ttl=300)
 def cargar_excel_drive(file_id):
-  url = f"https://drive.google.com/uc?id={file_id}&export=download"
-  session = requests.Session()
-  response = session.get(url)
+    url = f"https://drive.google.com/uc?id={file_id}&export=download"
+    session = requests.Session()
+    response = session.get(url)
+    
+    if response.status_code != 200:
+        st.error("No se pudo descargar el archivo desde Google Drive.")
+        return None
 
-  if response.status_code != 200:
-    st.error("No se pudo descargar el archivo desde Google Drive.")
-    return None
-
-  excel_bytes = io.BytesIO(response.content)
-  wb = openpyxl.load_workbook(excel_bytes, data_only=True)
-  return wb
-
+    excel_bytes = io.BytesIO(response.content)
+    wb = openpyxl.load_workbook(excel_bytes, data_only=True)
+    return wb
 
 def obtener_valor(sheet, celda_principal, celda_secundaria=None):
-  val = sheet[celda_principal].value
-  if val is None and celda_secundaria:
-    val = sheet[celda_secundaria].value
-  return val
-
+    val = sheet[celda_principal].value
+    if val is None and celda_secundaria:
+        val = sheet[celda_secundaria].value
+    return val
 
 def fmt_moneda(val):
-  if val is None:
-    return "$0,00"
-  try:
-    f = float(val)
-    return f"${f:,.2f}".replace(".", "X").replace(",", ".").replace("X", ",")
-  except:
-    return str(val)
-
+    if val is None:
+        return "$0,00"
+    try:
+        f = float(val)
+        return f"${f:,.2f}".replace(".", "X").replace(",", ".").replace("X", ",")
+    except:
+        return str(val)
 
 def fmt_porcentaje(val):
-  if val is None:
-    return "0,00%"
-  try:
-    f = float(val)
-    if f <= 1:
-      f = f * 100
-    return f"{f:.2f}%".replace(".", ",")
-  except:
-    return str(val)
-
+    if val is None:
+        return "0,00%"
+    try:
+        f = float(val)
+        if f <= 1:
+            f = f * 100
+        return f"{f:.2f}%".replace(".", ",")
+    except:
+        return str(val)
 
 def obtener_bytes_grafico(fig, height_val=380):
-  if fig is None:
-    return None
-  try:
-    fig_pdf = go.Figure(fig)
-    fig_pdf.update_layout(
-        paper_bgcolor="#1F2937",
-        plot_bgcolor="#1F2937",
-        font=dict(color="#FFFFFF", family="sans-serif"),
-    )
-    return fig_pdf.to_image(format="png", width=700, height=height_val, scale=2)
-  except Exception:
-    return None
-
+    if fig is None:
+        return None
+    try:
+        fig_pdf = go.Figure(fig)
+        fig_pdf.update_layout(
+            paper_bgcolor="#1F2937",
+            plot_bgcolor="#1F2937",
+            font=dict(color="#FFFFFF", family="sans-serif")
+        )
+        try:
+            return fig_pdf.to_image(format="png", width=700, height=height_val, scale=2, engine="kaleido")
+        except Exception:
+            return fig_pdf.to_image(format="png", width=700, height=height_val, scale=2)
+    except Exception:
+        return None
 
 # ==============================================================================
 # FUNCIÓN GENERADORA DE PDF CACHEADA (OPTIMIZA VELOCIDAD DE CARGA)
 # ==============================================================================
 @st.cache_data(ttl=600)
-def generar_pdf_reporte_cached(
-    datos_condiciones,
-    datos_kpi_res,
-    datos_kpi_rend,
-    movimientos_lista,
-    evolucion_mensual,
-    graficos_bytes=None,
-):
-  buffer = io.BytesIO()
-  doc = SimpleDocTemplate(
-      buffer,
-      pagesize=letter,
-      rightMargin=30,
-      leftMargin=30,
-      topMargin=30,
-      bottomMargin=30,
-  )
-  story = []
-  styles = getSampleStyleSheet()
-
-  style_title = ParagraphStyle(
-      "DocTitle",
-      parent=styles["Heading1"],
-      fontSize=16,
-      leading=18,
-      textColor=colors.HexColor("#1F2937"),
-      spaceAfter=4,
-  )
-  style_sub = ParagraphStyle(
-      "DocSub",
-      parent=styles["Normal"],
-      fontSize=9,
-      leading=11,
-      textColor=colors.HexColor("#4B5563"),
-      spaceAfter=10,
-  )
-  style_h2 = ParagraphStyle(
-      "DocH2",
-      parent=styles["Heading2"],
-      fontSize=11,
-      leading=13,
-      textColor=colors.HexColor("#1E3A8A"),
-      spaceBefore=10,
-      spaceAfter=4,
-  )
-  style_cell = ParagraphStyle(
-      "DocCell",
-      parent=styles["Normal"],
-      fontSize=7.5,
-      leading=9,
-      textColor=colors.HexColor("#000000"),
-  )
-  style_cell_bold = ParagraphStyle(
-      "DocCellBold", parent=style_cell, fontName="Helvetica-Bold"
-  )
-  style_cell_header = ParagraphStyle(
-      "DocCellHeader",
-      parent=style_cell,
-      fontName="Helvetica-Bold",
-      textColor=colors.white,
-      alignment=1,
-  )
-  style_sub_chart = ParagraphStyle(
-      "SubChart",
-      parent=styles["Normal"],
-      fontSize=9,
-      leading=11,
-      textColor=colors.HexColor("#0F172A"),
-      spaceBefore=6,
-      spaceAfter=4,
-  )
-
-  fecha_hoy = datetime.date.today().strftime("%d/%m/%Y")
-  story.append(Paragraph("💰 Ahorro Programado Jardín 2025-2026", style_title))
-  story.append(
-      Paragraph(
-          "Reporte Consolidado de Datos, Rendimientos y Gráficos | Fecha de"
-          f" exportación: {fecha_hoy}",
-          style_sub,
-      )
-  )
-
-  # 1. CONDICIONES
-  story.append(Paragraph("📋 1. Condiciones del Ahorro Programado", style_h2))
-  t_cond_data = [[
-      Paragraph("Concepto", style_cell_header),
-      Paragraph("Valor", style_cell_header),
-  ]]
-  for k, v in datos_condiciones:
-    t_cond_data.append(
-        [Paragraph(str(k), style_cell_bold), Paragraph(str(v), style_cell)]
+def generar_pdf_reporte_cached(datos_condiciones, datos_kpi_res, datos_kpi_rend, movimientos_lista, evolucion_mensual, graficos_bytes=None):
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=30,
+        leftMargin=30,
+        topMargin=30,
+        bottomMargin=30
     )
-  t_cond = Table(t_cond_data, colWidths=[220, 332])
-  t_cond.setStyle(
-      TableStyle([
-          ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F2937")),
-          ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#000000")),
-          ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-          ("TOPPADDING", (0, 0), (-1, -1), 3),
-          ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-      ])
-  )
-  story.append(t_cond)
-  story.append(Spacer(1, 8))
+    story = []
+    styles = getSampleStyleSheet()
 
-  # 2. KPI RESULTADOS
-  story.append(Paragraph("📊 2. KPI Resultados", style_h2))
-  t_res_data = [[
-      Paragraph("Indicador", style_cell_header),
-      Paragraph("Valor", style_cell_header),
-  ]]
-  for k, v in datos_kpi_res:
-    t_res_data.append(
-        [Paragraph(str(k), style_cell_bold), Paragraph(str(v), style_cell)]
-    )
-  t_res = Table(t_res_data, colWidths=[220, 332])
-  t_res.setStyle(
-      TableStyle([
-          ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F2937")),
-          ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#000000")),
-          ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-          ("TOPPADDING", (0, 0), (-1, -1), 3),
-          ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-      ])
-  )
-  story.append(t_res)
-  story.append(Spacer(1, 8))
+    style_title = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontSize=16, leading=18, textColor=colors.HexColor('#1F2937'), spaceAfter=4)
+    style_sub = ParagraphStyle('DocSub', parent=styles['Normal'], fontSize=9, leading=11, textColor=colors.HexColor('#4B5563'), spaceAfter=10)
+    style_h2 = ParagraphStyle('DocH2', parent=styles['Heading2'], fontSize=11, leading=13, textColor=colors.HexColor('#1E3A8A'), spaceBefore=10, spaceAfter=4)
+    style_cell = ParagraphStyle('DocCell', parent=styles['Normal'], fontSize=7.5, leading=9, textColor=colors.HexColor('#000000'))
+    style_cell_bold = ParagraphStyle('DocCellBold', parent=style_cell, fontName='Helvetica-Bold')
+    style_cell_header = ParagraphStyle('DocCellHeader', parent=style_cell, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
+    style_sub_chart = ParagraphStyle('SubChart', parent=styles['Normal'], fontSize=9, leading=11, textColor=colors.HexColor('#0F172A'), spaceBefore=6, spaceAfter=4)
 
-  # 3. KPI RENDIMIENTOS
-  story.append(Paragraph("📈 3. KPI Rendimientos", style_h2))
-  t_rend_data = [[
-      Paragraph("Indicador / Métrica", style_cell_header),
-      Paragraph("Valor", style_cell_header),
-  ]]
-  for k, v in datos_kpi_rend:
-    t_rend_data.append(
-        [Paragraph(str(k), style_cell_bold), Paragraph(str(v), style_cell)]
-    )
-  t_rend = Table(t_rend_data, colWidths=[220, 332])
-  t_rend.setStyle(
-      TableStyle([
-          ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F2937")),
-          ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#000000")),
-          ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-          ("TOPPADDING", (0, 0), (-1, -1), 3),
-          ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-      ])
-  )
-  story.append(t_rend)
-  story.append(Spacer(1, 8))
+    fecha_hoy = datetime.date.today().strftime('%d/%m/%Y')
+    story.append(Paragraph("💰 Ahorro Programado Jardín 2025-2026", style_title))
+    story.append(Paragraph(f"Reporte Consolidado de Datos, Rendimientos y Gráficos | Fecha de exportación: {fecha_hoy}", style_sub))
 
-  # 4. EVOLUCIÓN MENSUAL (DATOS DE GRÁFICOS)
-  story.append(
-      Paragraph("📉 4. Evolución Mensual de Saldos e Intereses", style_h2)
-  )
-  t_ev_data = [[
-      Paragraph("Fecha", style_cell_header),
-      Paragraph("Saldo Fin Mes", style_cell_header),
-      Paragraph("Interés Mensual", style_cell_header),
-      Paragraph("Int. Diario Prom.", style_cell_header),
-      Paragraph("Int. Acumulado", style_cell_header),
-  ]]
-  for item in evolucion_mensual:
-    t_ev_data.append([
-        Paragraph(item["fecha"], style_cell),
-        Paragraph(item["saldo"], style_cell),
-        Paragraph(item["int_mensual"], style_cell),
-        Paragraph(item["int_diario_prom"], style_cell),
-        Paragraph(item["int_acumulado"], style_cell),
-    ])
-  t_ev = Table(t_ev_data, colWidths=[80, 115, 115, 120, 122])
-  t_ev.setStyle(
-      TableStyle([
-          ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F2937")),
-          ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#000000")),
-          ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-          ("TOPPADDING", (0, 0), (-1, -1), 3),
-          ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-      ])
-  )
-  story.append(t_ev)
-  story.append(Spacer(1, 8))
+    # 1. CONDICIONES
+    story.append(Paragraph("📋 1. Condiciones del Ahorro Programado", style_h2))
+    t_cond_data = [[Paragraph("Concepto", style_cell_header), Paragraph("Valor", style_cell_header)]]
+    for k, v in datos_condiciones:
+        t_cond_data.append([Paragraph(str(k), style_cell_bold), Paragraph(str(v), style_cell)])
+    t_cond = Table(t_cond_data, colWidths=[220, 332])
+    t_cond.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1F2937')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#000000')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 3),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+    ]))
+    story.append(t_cond)
+    story.append(Spacer(1, 8))
 
-  # 5. TABLA RESUMEN DE MOVIMIENTOS
-  story.append(Paragraph("📑 5. Tabla Resumen de Movimientos", style_h2))
-  t_mov_data = [[
-      Paragraph("Fecha", style_cell_header),
-      Paragraph("Dep. Mensual", style_cell_header),
-      Paragraph("Dep. Personales", style_cell_header),
-      Paragraph("Saldo Acumulado", style_cell_header),
-      Paragraph("Int. Diario", style_cell_header),
-      Paragraph("Int. Mensual", style_cell_header),
-  ]]
-  for m in movimientos_lista:
-    t_mov_data.append([
-        Paragraph(m["dt_str"], style_cell_bold),
-        Paragraph(m["dep_m_str"], style_cell),
-        Paragraph(m["dep_p_str"], style_cell),
-        Paragraph(m["saldo_str"], style_cell),
-        Paragraph(m["int_d_str"], style_cell),
-        Paragraph(
-            m["int_m_str"],
-            style_cell_bold if m["int_m_str"] else style_cell,
-        ),
-    ])
-  t_mov = Table(t_mov_data, colWidths=[70, 95, 95, 105, 95, 92])
-  t_mov.setStyle(
-      TableStyle([
-          ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1F2937")),
-          ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#000000")),
-          ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-          ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-          ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
-      ])
-  )
-  story.append(t_mov)
-  story.append(Spacer(1, 10))
+    # 2. KPI RESULTADOS
+    story.append(Paragraph("📊 2. KPI Resultados", style_h2))
+    t_res_data = [[Paragraph("Indicador", style_cell_header), Paragraph("Valor", style_cell_header)]]
+    for k, v in datos_kpi_res:
+        t_res_data.append([Paragraph(str(k), style_cell_bold), Paragraph(str(v), style_cell)])
+    t_res = Table(t_res_data, colWidths=[220, 332])
+    t_res.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1F2937')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#000000')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 3),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+    ]))
+    story.append(t_res)
+    story.append(Spacer(1, 8))
 
-  # 6. SECCIÓN DE GRÁFICOS
-  if graficos_bytes:
-    story.append(
-        Paragraph("📊 6. Gráficos de Evolución y Rendimientos", style_h2)
-    )
-    story.append(
-        HRFlowable(
-            width="100%",
-            thickness=1,
-            color=colors.HexColor("#1E3A8A"),
-            spaceBefore=2,
-            spaceAfter=8,
-        )
-    )
-    for titulo, b_img, h_px in graficos_bytes:
-      if b_img:
-        story.append(Paragraph(f"<b>{titulo}</b>", style_sub_chart))
-        img_stream = io.BytesIO(b_img)
-        calc_h = min(400, 540 * (h_px / 700))
-        img_flowable = Image(img_stream, width=540, height=calc_h)
-        story.append(img_flowable)
-        story.append(Spacer(1, 10))
+    # 3. KPI RENDIMIENTOS
+    story.append(Paragraph("📈 3. KPI Rendimientos", style_h2))
+    t_rend_data = [[Paragraph("Indicador / Métrica", style_cell_header), Paragraph("Valor", style_cell_header)]]
+    for k, v in datos_kpi_rend:
+        t_rend_data.append([Paragraph(str(k), style_cell_bold), Paragraph(str(v), style_cell)])
+    t_rend = Table(t_rend_data, colWidths=[220, 332])
+    t_rend.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1F2937')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#000000')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 3),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+    ]))
+    story.append(t_rend)
+    story.append(Spacer(1, 8))
 
-  doc.build(story)
-  buffer.seek(0)
-  return buffer.getvalue()
+    # 4. EVOLUCIÓN MENSUAL (DATOS DE GRÁFICOS)
+    story.append(Paragraph("📉 4. Evolución Mensual de Saldos e Intereses", style_h2))
+    t_ev_data = [[
+        Paragraph("Fecha", style_cell_header),
+        Paragraph("Saldo Fin Mes", style_cell_header),
+        Paragraph("Interés Mensual", style_cell_header),
+        Paragraph("Int. Diario Prom.", style_cell_header),
+        Paragraph("Int. Acumulado", style_cell_header)
+    ]]
+    for item in evolucion_mensual:
+        t_ev_data.append([
+            Paragraph(item["fecha"], style_cell),
+            Paragraph(item["saldo"], style_cell),
+            Paragraph(item["int_mensual"], style_cell),
+            Paragraph(item["int_diario_prom"], style_cell),
+            Paragraph(item["int_acumulado"], style_cell)
+        ])
+    t_ev = Table(t_ev_data, colWidths=[80, 115, 115, 120, 122])
+    t_ev.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1F2937')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#000000')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 3),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
+    ]))
+    story.append(t_ev)
+    story.append(Spacer(1, 8))
 
+    # 5. TABLA RESUMEN DE MOVIMIENTOS
+    story.append(Paragraph("📑 5. Tabla Resumen de Movimientos", style_h2))
+    t_mov_data = [[
+        Paragraph("Fecha", style_cell_header),
+        Paragraph("Dep. Mensual", style_cell_header),
+        Paragraph("Dep. Personales", style_cell_header),
+        Paragraph("Saldo Acumulado", style_cell_header),
+        Paragraph("Int. Diario", style_cell_header),
+        Paragraph("Int. Mensual", style_cell_header)
+    ]]
+    for m in movimientos_lista:
+        t_mov_data.append([
+            Paragraph(m["dt_str"], style_cell_bold),
+            Paragraph(m["dep_m_str"], style_cell),
+            Paragraph(m["dep_p_str"], style_cell),
+            Paragraph(m["saldo_str"], style_cell),
+            Paragraph(m["int_d_str"], style_cell),
+            Paragraph(m["int_m_str"], style_cell_bold if m["int_m_str"] else style_cell)
+        ])
+    t_mov = Table(t_mov_data, colWidths=[70, 95, 95, 105, 95, 92])
+    t_mov.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#1F2937')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#000000')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+        ('TOPPADDING', (0,0), (-1,-1), 2.5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 2.5),
+    ]))
+    story.append(t_mov)
+    story.append(Spacer(1, 10))
+
+    # 6. SECCIÓN DE GRÁFICOS
+    if graficos_bytes:
+        story.append(Paragraph("📊 6. Gráficos de Evolución y Rendimientos", style_h2))
+        story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#1E3A8A'), spaceBefore=2, spaceAfter=8))
+        for titulo, b_img, h_px in graficos_bytes:
+            if b_img:
+                story.append(Paragraph(f"<b>{titulo}</b>", style_sub_chart))
+                img_stream = io.BytesIO(b_img)
+                calc_h = min(400, 540 * (h_px / 700))
+                img_flowable = Image(img_stream, width=540, height=calc_h)
+                story.append(img_flowable)
+                story.append(Spacer(1, 10))
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
 
 # ==============================================================================
 # ENCABEZADO PRINCIPAL Y RECARGA
 # ==============================================================================
 col_title, col_btn1, col_btn2 = st.columns([3, 1, 1])
 with col_title:
-  st.title("💰 Ahorro Programado Jardín 2025-2026")
-  st.caption("Sincronizado en tiempo real desde Google Drive")
+    st.title("💰 Ahorro Programado Jardín 2025-2026")
+    st.caption("Sincronizado en tiempo real desde Google Drive")
 
 with col_btn1:
-  if st.button("🔄 Recargar", use_container_width=True):
-    st.cache_data.clear()
-    st.rerun()
+    if st.button("🔄 Recargar", use_container_width=True):
+        st.cache_data.clear()
+        st.rerun()
 
 st.divider()
 
 wb = cargar_excel_drive(DRIVE_FILE_ID)
 
 if wb is not None:
-  sheet = wb.active
+    sheet = wb.active
 
-  # ==============================================================================
-  # 1. FICHA TÉCNICA CONDICIONES DEL AHORRO (E1:J9)
-  # ==============================================================================
-  tna = obtener_valor(sheet, "H1", "F1")
-  tasa_diaria = obtener_valor(sheet, "J2", "F2")
-  fecha_inicio = obtener_valor(sheet, "H3", "F3")
-  plazo_meses = obtener_valor(sheet, "H4", "F4")
-  fecha_fin = obtener_valor(sheet, "H5", "F5")
-  total_dias = obtener_valor(sheet, "H6", "F6")
-  valor_aporte = obtener_valor(sheet, "H7", "F7")
-  dia_aporte = obtener_valor(sheet, "H8", "F8")
-  meses_real = sheet["H9"].value
-  dias_real = sheet["J9"].value
+    # ==============================================================================
+    # 1. FICHA TÉCNICA CONDICIONES DEL AHORRO (E1:J9)
+    # ==============================================================================
+    tna = obtener_valor(sheet, "H1", "F1")
+    tasa_diaria = obtener_valor(sheet, "J2", "F2")
+    fecha_inicio = obtener_valor(sheet, "H3", "F3")
+    plazo_meses = obtener_valor(sheet, "H4", "F4")
+    fecha_fin = obtener_valor(sheet, "H5", "F5")
+    total_dias = obtener_valor(sheet, "H6", "F6")
+    valor_aporte = obtener_valor(sheet, "H7", "F7")
+    dia_aporte = obtener_valor(sheet, "H8", "F8")
+    meses_real = sheet["H9"].value
+    dias_real = sheet["J9"].value
 
-  tna_num = float(tna) if isinstance(tna, (int, float)) else 0.065
-  tna_val = tna_num * 100 if tna_num <= 1 else tna_num
-  fecha_ini_str = (
-      fecha_inicio.strftime("%d/%m/%Y")
-      if hasattr(fecha_inicio, "strftime")
-      else str(fecha_inicio or "-")
-  )
-  fecha_fin_str = (
-      fecha_fin.strftime("%d/%m/%Y")
-      if hasattr(fecha_fin, "strftime")
-      else str(fecha_fin or "-")
-  )
-  val_diaria_str = (
-      f"{float(tasa_diaria):.7f}".replace(".", ",")
-      if isinstance(tasa_diaria, (int, float))
-      else str(tasa_diaria)
-  )
-  val_aporte_str = (
-      f"{float(valor_aporte):,.2f}".replace(".", ",")
-      if isinstance(valor_aporte, (int, float))
-      else str(valor_aporte)
-  )
+    tna_num = float(tna) if isinstance(tna, (int, float)) else 0.065
+    tna_val = tna_num * 100 if tna_num <= 1 else tna_num
+    fecha_ini_str = fecha_inicio.strftime('%d/%m/%Y') if hasattr(fecha_inicio, 'strftime') else str(fecha_inicio or "-")
+    fecha_fin_str = fecha_fin.strftime('%d/%m/%Y') if hasattr(fecha_fin, 'strftime') else str(fecha_fin or "-")
+    val_diaria_str = f"{float(tasa_diaria):.7f}".replace(".", ",") if isinstance(tasa_diaria, (int, float)) else str(tasa_diaria)
+    val_aporte_str = f"{float(valor_aporte):,.2f}".replace(".", ",") if isinstance(valor_aporte, (int, float)) else str(valor_aporte)
 
-  st.subheader("📋 Condiciones del Ahorro Programado")
+    st.subheader("📋 Condiciones del Ahorro Programado")
 
-  html_condiciones = f"""<style>
+    html_condiciones = f"""<style>
 .excel-tbl-card {{
     background-color: #ffffff;
     padding: 0px;
@@ -527,72 +398,62 @@ if wb is not None:
 </table>
 </div>"""
 
-  st.markdown(html_condiciones, unsafe_allow_html=True)
+    st.markdown(html_condiciones, unsafe_allow_html=True)
 
-  st.divider()
+    st.divider()
 
-  # ==============================================================================
-  # 2. SECCIONES DE KPIS: RESULTADOS Y RENDIMIENTOS
-  # ==============================================================================
-  d2 = sheet["D2"].value  # Total Interés Ganados
-  d3 = sheet["D3"].value  # Total Depósitos Mensuales
-  d4 = sheet["D4"].value  # Total Depósitos Personales
-  d5 = sheet["D5"].value  # Total Depositado sin intereses
-  d6 = sheet["D6"].value  # Total Ganado Incluido Intereses
+    # ==============================================================================
+    # 2. SECCIONES DE KPIS: RESULTADOS Y RENDIMIENTOS
+    # ==============================================================================
+    d2 = sheet["D2"].value   # Total Interés Ganados
+    d3 = sheet["D3"].value   # Total Depósitos Mensuales
+    d4 = sheet["D4"].value   # Total Depósitos Personales
+    d5 = sheet["D5"].value   # Total Depositado sin intereses
+    d6 = sheet["D6"].value   # Total Ganado Incluido Intereses
 
-  b7 = sheet["B7"].value  # TIR (Tasa Interna de Retorno)
-  d7 = sheet["D7"].value  # ROI RENTABILIDAD ACUMULADA
-  d16 = sheet["D16"].value  # Saldo Fin mes Promedio Ponderado
-  d19 = sheet["D19"].value  # Aportes Personales Promedio
-  b19 = sheet["B19"].value  # Interés Diario Promedio
+    b7 = sheet["B7"].value   # TIR (Tasa Interna de Retorno)
+    d7 = sheet["D7"].value   # ROI RENTABILIDAD ACUMULADA
+    d16 = sheet["D16"].value # Saldo Fin mes Promedio Ponderado
+    d19 = sheet["D19"].value # Aportes Personales Promedio
+    b19 = sheet["B19"].value # Interés Diario Promedio
 
-  # CÁLCULOS DE KPIS EXISTENTES
-  tna_dec = tna_num if tna_num <= 1 else tna_num / 100.0
-  tea_calc = ((1.0 + (tna_dec / 12.0)) ** 12.0) - 1.0
+    # CÁLCULOS DE KPIS EXISTENTES
+    tna_dec = tna_num if tna_num <= 1 else tna_num / 100.0
+    tea_calc = ((1.0 + (tna_dec / 12.0)) ** 12.0) - 1.0
 
-  d2_num = float(d2) if isinstance(d2, (int, float)) else 0.0
-  d5_num = float(d5) if isinstance(d5, (int, float)) else 0.0
-  d6_num = float(d6) if isinstance(d6, (int, float)) else 0.0
-  ratio_ganancia_calc = (d2_num / d6_num) if d6_num > 0 else 0.0
+    d2_num = float(d2) if isinstance(d2, (int, float)) else 0.0
+    d5_num = float(d5) if isinstance(d5, (int, float)) else 0.0
+    d6_num = float(d6) if isinstance(d6, (int, float)) else 0.0
+    ratio_ganancia_calc = (d2_num / d6_num) if d6_num > 0 else 0.0
 
-  # CÁLCULO DE KPIS ADICIONALES
-  chart_intereses_kpi = []
-  r_kpi = 2
-  while True:
-    f_cobro_k = sheet.cell(row=r_kpi, column=29).value  # Col AC
-    int_m_k = sheet.cell(row=r_kpi, column=33).value  # Col AG
-    if f_cobro_k is None or str(f_cobro_k).strip() == "":
-      break
-    chart_intereses_kpi.append(
-        float(int_m_k) if isinstance(int_m_k, (int, float)) else 0.0
-    )
-    r_kpi += 1
+    # CÁLCULO DE KPIS ADICIONALES
+    chart_intereses_kpi = []
+    r_kpi = 2
+    while True:
+        f_cobro_k = sheet.cell(row=r_kpi, column=29).value  # Col AC
+        int_m_k = sheet.cell(row=r_kpi, column=33).value     # Col AG
+        if f_cobro_k is None or str(f_cobro_k).strip() == "":
+            break
+        chart_intereses_kpi.append(float(int_m_k) if isinstance(int_m_k, (int, float)) else 0.0)
+        r_kpi += 1
 
-  interes_compuesto_calc = 0.0
-  cum_int_temp = 0.0
-  tna_mensual = tna_dec / 12.0
-  for int_m_val in chart_intereses_kpi:
-    interes_compuesto_calc += cum_int_temp * tna_mensual
-    cum_int_temp += int_m_val
+    interes_compuesto_calc = 0.0
+    cum_int_temp = 0.0
+    tna_mensual = tna_dec / 12.0
+    for int_m_val in chart_intereses_kpi:
+        interes_compuesto_calc += cum_int_temp * tna_mensual
+        cum_int_temp += int_m_val
 
-  d7_num = (
-      float(d7)
-      if isinstance(d7, (int, float))
-      else (d2_num / d5_num if d5_num > 0 else 0.0)
-  )
-  d7_pct = d7_num * 100.0 if d7_num <= 1.0 else d7_num
-  retorno_100_val = f"${d7_pct:.2f}".replace(".", ",")
-  ratio_100_val = f"${ratio_ganancia_calc * 100.0:.2f}".replace(".", ",")
+    d7_num = float(d7) if isinstance(d7, (int, float)) else (d2_num / d5_num if d5_num > 0 else 0.0)
+    d7_pct = d7_num * 100.0 if d7_num <= 1.0 else d7_num
+    retorno_100_val = f"${d7_pct:.2f}".replace(".", ",")
+    ratio_100_val = f"${ratio_ganancia_calc * 100.0:.2f}".replace(".", ",")
 
-  b19_num = float(b19) if isinstance(b19, (int, float)) else 0.0
-  d16_num = float(d16) if isinstance(d16, (int, float)) else 0.0
-  prod_diaria_1000 = (
-      (b19_num / (d16_num / 1000.0))
-      if d16_num > 0
-      else (tna_dec / 360.0) * 1000.0
-  )
+    b19_num = float(b19) if isinstance(b19, (int, float)) else 0.0
+    d16_num = float(d16) if isinstance(d16, (int, float)) else 0.0
+    prod_diaria_1000 = (b19_num / (d16_num / 1000.0)) if d16_num > 0 else (tna_dec / 360.0) * 1000.0
 
-  css_kpis = """<style>
+    css_kpis = """<style>
 .kpi-grid {
     display: flex;
     flex-wrap: wrap;
@@ -649,10 +510,10 @@ if wb is not None:
 }
 </style>"""
 
-  # --- KPI RESULTADOS ---
-  st.subheader("📊 KPI Resultados")
-
-  html_kpi_resultados = f"""{css_kpis}
+    # --- KPI RESULTADOS ---
+    st.subheader("📊 KPI Resultados")
+    
+    html_kpi_resultados = f"""{css_kpis}
 <div class="kpi-grid">
 <div class="kpi-card kpi-card-green">
 <div class="kpi-label">Total Interés Ganados</div>
@@ -676,12 +537,12 @@ if wb is not None:
 </div>
 </div>"""
 
-  st.markdown(html_kpi_resultados, unsafe_allow_html=True)
+    st.markdown(html_kpi_resultados, unsafe_allow_html=True)
 
-  # --- KPI RENDIMIENTOS ---
-  st.subheader("📈 KPI Rendimientos")
+    # --- KPI RENDIMIENTOS ---
+    st.subheader("📈 KPI Rendimientos")
 
-  html_kpi_rendimientos = f"""<div class="kpi-grid">
+    html_kpi_rendimientos = f"""<div class="kpi-grid">
 <div class="kpi-card kpi-card-purple">
 <div class="kpi-label">TIR (Tasa Int. Retorno)</div>
 <div class="kpi-value">{fmt_porcentaje(b7)}</div>
@@ -734,151 +595,111 @@ if wb is not None:
 </div>
 </div>"""
 
-  st.markdown(html_kpi_rendimientos, unsafe_allow_html=True)
+    st.markdown(html_kpi_rendimientos, unsafe_allow_html=True)
 
-  st.divider()
+    st.divider()
 
-  # ==============================================================================
-  # 3. TABLA RESUMEN DE MOVIMIENTOS DINÁMICA (AZ:BF)
-  # ==============================================================================
-  st.subheader("📑 Tabla Resumen de Movimientos")
+    # ==============================================================================
+    # 3. TABLA RESUMEN DE MOVIMIENTOS DINÁMICA (AZ:BF)
+    # ==============================================================================
+    st.subheader("📑 Tabla Resumen de Movimientos")
 
-  movements = []
-  r = 3  # Fila de inicio (AZ3:BF3)
+    movements = []
+    r = 3  # Fila de inicio (AZ3:BF3)
+    
+    while True:
+        date_val = sheet.cell(row=r, column=52).value  # Col AZ (Fechas)
+        if date_val is None or str(date_val).strip() == "":
+            break
 
-  while True:
-    date_val = sheet.cell(row=r, column=52).value  # Col AZ (Fechas)
-    if date_val is None or str(date_val).strip() == "":
-      break
+        dep_m = sheet.cell(row=r, column=53).value or 0     # Col BA
+        dep_p = sheet.cell(row=r, column=54).value or 0     # Col BB
+        saldo_acum = sheet.cell(row=r, column=55).value or 0 # Col BC
+        int_diario = sheet.cell(row=r, column=56).value or 0 # Col BD
+        inc_int_d = sheet.cell(row=r, column=57).value or 0  # Col BE
+        int_m = sheet.cell(row=r, column=58).value          # Col BF
 
-    dep_m = sheet.cell(row=r, column=53).value or 0  # Col BA
-    dep_p = sheet.cell(row=r, column=54).value or 0  # Col BB
-    saldo_acum = sheet.cell(row=r, column=55).value or 0  # Col BC
-    int_diario = sheet.cell(row=r, column=56).value or 0  # Col BD
-    inc_int_d = sheet.cell(row=r, column=57).value or 0  # Col BE
-    int_m = sheet.cell(row=r, column=58).value  # Col BF
+        is_int_m = int_m is not None and isinstance(int_m, (int, float)) and float(int_m) > 0
+        is_dep_p = isinstance(dep_p, (int, float)) and float(dep_p) > 0
+        is_dep_m = isinstance(dep_m, (int, float)) and float(dep_m) > 0
 
-    is_int_m = (
-        int_m is not None
-        and isinstance(int_m, (int, float))
-        and float(int_m) > 0
-    )
-    is_dep_p = isinstance(dep_p, (int, float)) and float(dep_p) > 0
-    is_dep_m = isinstance(dep_m, (int, float)) and float(dep_m) > 0
+        if is_int_m:
+            row_class = "row-blue"
+            tipo_cat = "🟦 Intereses Ganados"
+        elif is_dep_p:
+            row_class = "row-yellow"
+            tipo_cat = "🟨 Aportes Personales"
+        elif is_dep_m:
+            row_class = "row-pink"
+            tipo_cat = "🟧 Aportes Mensuales"
+        else:
+            row_class = "row-white"
+            tipo_cat = "Otros"
 
-    if is_int_m:
-      row_class = "row-blue"
-      tipo_cat = "🟦 Intereses Ganados"
-    elif is_dep_p:
-      row_class = "row-yellow"
-      tipo_cat = "🟨 Aportes Personales"
-    elif is_dep_m:
-      row_class = "row-pink"
-      tipo_cat = "🟧 Aportes Mensuales"
+        movements.append({
+            'fecha': date_val,
+            'dep_m': float(dep_m) if isinstance(dep_m, (int, float)) else 0.0,
+            'dep_p': float(dep_p) if isinstance(dep_p, (int, float)) else 0.0,
+            'saldo_acum': float(saldo_acum) if isinstance(saldo_acum, (int, float)) else 0.0,
+            'int_diario': float(int_diario) if isinstance(int_diario, (int, float)) else 0.0,
+            'inc_int_d': float(inc_int_d) if isinstance(inc_int_d, (int, float)) else 0.0,
+            'int_m': float(int_m) if is_int_m else None,
+            'row_class': row_class,
+            'tipo_cat': tipo_cat
+        })
+        r += 1
+
+    opciones_disponibles = ["🟨 Aportes Personales", "🟧 Aportes Mensuales", "🟦 Intereses Ganados"]
+    
+    st.write("**Filtra los movimientos por categoría:**")
+    
+    if hasattr(st, "pills"):
+        categorias_seleccionadas = st.pills(
+            label="Categorías",
+            options=opciones_disponibles,
+            default=opciones_disponibles,
+            selection_mode="multi",
+            label_visibility="collapsed"
+        )
     else:
-      row_class = "row-white"
-      tipo_cat = "Otros"
+        categorias_seleccionadas = st.multiselect(
+            label="Selecciona Categorías a mostrar",
+            options=opciones_disponibles,
+            default=opciones_disponibles,
+            label_visibility="collapsed"
+        )
 
-    movements.append({
-        "fecha": date_val,
-        "dep_m": float(dep_m) if isinstance(dep_m, (int, float)) else 0.0,
-        "dep_p": float(dep_p) if isinstance(dep_p, (int, float)) else 0.0,
-        "saldo_acum": (
-            float(saldo_acum) if isinstance(saldo_acum, (int, float)) else 0.0
-        ),
-        "int_diario": (
-            float(int_diario) if isinstance(int_diario, (int, float)) else 0.0
-        ),
-        "inc_int_d": (
-            float(inc_int_d) if isinstance(inc_int_d, (int, float)) else 0.0
-        ),
-        "int_m": float(int_m) if is_int_m else None,
-        "row_class": row_class,
-        "tipo_cat": tipo_cat,
-    })
-    r += 1
+    movimientos_filtrados = [
+        m for m in movements if m['tipo_cat'] in (categorias_seleccionadas or [])
+    ]
 
-  opciones_disponibles = [
-      "🟨 Aportes Personales",
-      "🟧 Aportes Mensuales",
-      "🟦 Intereses Ganados",
-  ]
+    rows_html = []
+    for m in movimientos_filtrados:
+        dt_str = m['fecha'].strftime('%d/%m/%Y') if hasattr(m['fecha'], 'strftime') else str(m['fecha'])
+        dep_m_str = f"{m['dep_m']:,.2f}".replace(".", "X").replace(",", ".").replace("X", ",") if m['dep_m'] > 0 else "0,00"
+        dep_p_str = f"{m['dep_p']:,.2f}".replace(".", "X").replace(",", ".").replace("X", ",") if m['dep_p'] > 0 else "0,00"
+        saldo_str = f"{m['saldo_acum']:,.2f}".replace(".", "X").replace(",", ".").replace("X", ",")
+        int_d_str = f"{m['int_diario']:.2f}".replace(".", ",")
+        inc_d_str = f"{m['inc_int_d']:.2f}".replace(".", ",") if m['inc_int_d'] > 0 else ""
+        int_m_str = f"<b>{m['int_m']:,.2f}</b>".replace(".", "X").replace(",", ".").replace("X", ",") if m['int_m'] is not None else ""
 
-  st.write("**Filtra los movimientos por categoría:**")
+        rc = m['row_class']
 
-  if hasattr(st, "pills"):
-    categorias_seleccionadas = st.pills(
-        label="Categorías",
-        options=opciones_disponibles,
-        default=opciones_disponibles,
-        selection_mode="multi",
-        label_visibility="collapsed",
-    )
-  else:
-    categorias_seleccionadas = st.multiselect(
-        label="Selecciona Categorías a mostrar",
-        options=opciones_disponibles,
-        default=opciones_disponibles,
-        label_visibility="collapsed",
-    )
+        rows_html.append(
+            f'<tr class="{rc}">'
+            f'<td class="lbl-sticky-col"><b>{dt_str}</b></td>'
+            f'<td>{dep_m_str}</td>'
+            f'<td>{dep_p_str}</td>'
+            f'<td style="font-weight: 600;">{saldo_str}</td>'
+            f'<td>{int_d_str}</td>'
+            f'<td>{inc_d_str}</td>'
+            f'<td>{int_m_str}</td>'
+            f'</tr>'
+        )
 
-  movimientos_filtrados = [
-      m for m in movements if m["tipo_cat"] in (categorias_seleccionadas or [])
-  ]
+    tabla_movs_body = "".join(rows_html)
 
-  rows_html = []
-  for m in movimientos_filtrados:
-    dt_str = (
-        m["fecha"].strftime("%d/%m/%Y")
-        if hasattr(m["fecha"], "strftime")
-        else str(m["fecha"])
-    )
-    dep_m_str = (
-        f"{m['dep_m']:,.2f}".replace(".", "X").replace(",", ".").replace("X", ",")
-        if m["dep_m"] > 0
-        else "0,00"
-    )
-    dep_p_str = (
-        f"{m['dep_p']:,.2f}".replace(".", "X").replace(",", ".").replace("X", ",")
-        if m["dep_p"] > 0
-        else "0,00"
-    )
-    saldo_str = (
-        f"{m['saldo_acum']:,.2f}"
-        .replace(".", "X")
-        .replace(",", ".")
-        .replace("X", ",")
-    )
-    int_d_str = f"{m['int_diario']:.2f}".replace(".", ",")
-    inc_d_str = (
-        f"{m['inc_int_d']:.2f}".replace(".", ",") if m["inc_int_d"] > 0 else ""
-    )
-    int_m_str = (
-        f"<b>{m['int_m']:,.2f}</b>"
-        .replace(".", "X")
-        .replace(",", ".")
-        .replace("X", ",")
-        if m["int_m"] is not None
-        else ""
-    )
-
-    rc = m["row_class"]
-
-    rows_html.append(
-        f'<tr class="{rc}">'
-        f'<td class="lbl-sticky-col"><b>{dt_str}</b></td>'
-        f"<td>{dep_m_str}</td>"
-        f"<td>{dep_p_str}</td>"
-        f'<td style="font-weight: 600;">{saldo_str}</td>'
-        f"<td>{int_d_str}</td>"
-        f"<td>{inc_d_str}</td>"
-        f"<td>{int_m_str}</td>"
-        "</tr>"
-    )
-
-  tabla_movs_body = "".join(rows_html)
-
-  html_movs_completo = f"""<style>
+    html_movs_completo = f"""<style>
 .tbl-scroll-wrapper {{
     max-height: 480px;
     width: 100%;
@@ -978,417 +799,355 @@ if wb is not None:
 </table>
 </div>"""
 
-  st.markdown(html_movs_completo, unsafe_allow_html=True)
+    st.markdown(html_movs_completo, unsafe_allow_html=True)
 
-  st.divider()
+    st.divider()
 
-  # ==============================================================================
-  # 4. SECCIÓN DE GRÁFICOS HORIZONTALES INTELIGENTES 100% ADAPTADOS A MÓVIL
-  # ==============================================================================
-  st.subheader("📊 Evolución de Saldo e Intereses Mensuales")
+    # ==============================================================================
+    # 4. SECCIÓN DE GRÁFICOS HORIZONTALES INTELIGENTES 100% ADAPTADOS A MÓVIL
+    # ==============================================================================
+    st.subheader("📊 Evolución de Saldo e Intereses Mensuales")
 
-  chart_dates = []
-  chart_saldos = []
-  chart_intereses = []
+    chart_dates = []
+    chart_saldos = []
+    chart_intereses = []
 
-  r_chart = 2
-  while True:
-    f_cobro = sheet.cell(row=r_chart, column=29).value
-    saldo_fin = sheet.cell(row=r_chart, column=30).value
-    int_mes = sheet.cell(row=r_chart, column=33).value
+    r_chart = 2
+    while True:
+        f_cobro = sheet.cell(row=r_chart, column=29).value
+        saldo_fin = sheet.cell(row=r_chart, column=30).value
+        int_mes = sheet.cell(row=r_chart, column=33).value
 
-    if f_cobro is None or str(f_cobro).strip() == "":
-      break
+        if f_cobro is None or str(f_cobro).strip() == "":
+            break
 
-    dt_str = (
-        f_cobro.strftime("%d/%m/%Y")
-        if hasattr(f_cobro, "strftime")
-        else str(f_cobro)
-    )
-    saldo_val = float(saldo_fin) if isinstance(saldo_fin, (int, float)) else 0.0
-    int_mes_val = float(int_mes) if isinstance(int_mes, (int, float)) else 0.0
+        dt_str = f_cobro.strftime('%d/%m/%Y') if hasattr(f_cobro, 'strftime') else str(f_cobro)
+        saldo_val = float(saldo_fin) if isinstance(saldo_fin, (int, float)) else 0.0
+        int_mes_val = float(int_mes) if isinstance(int_mes, (int, float)) else 0.0
 
-    chart_dates.append(dt_str)
-    chart_saldos.append(saldo_val)
-    chart_intereses.append(int_mes_val)
-    r_chart += 1
+        chart_dates.append(dt_str)
+        chart_saldos.append(saldo_val)
+        chart_intereses.append(int_mes_val)
+        r_chart += 1
 
-  daily_int_by_month = {}
-  for r_d in range(2, sheet.max_row + 1):
-    f_val = sheet.cell(row=r_d, column=1).value
-    r_val = sheet.cell(row=r_d, column=18).value
+    daily_int_by_month = {}
+    for r_d in range(2, sheet.max_row + 1):
+        f_val = sheet.cell(row=r_d, column=1).value
+        r_val = sheet.cell(row=r_d, column=18).value
 
-    if f_val is None or str(f_val).strip() == "":
-      continue
+        if f_val is None or str(f_val).strip() == "":
+            continue
 
-    dt = None
-    if hasattr(f_val, "year"):
-      dt = f_val
-    else:
-      try:
-        dt = pd.to_datetime(f_val, dayfirst=True)
-      except:
-        continue
+        dt = None
+        if hasattr(f_val, 'year'):
+            dt = f_val
+        else:
+            try:
+                dt = pd.to_datetime(f_val, dayfirst=True)
+            except:
+                continue
 
-    try:
-      num_val = float(r_val) if r_val is not None else 0.0
-    except (ValueError, TypeError):
-      continue
+        try:
+            num_val = float(r_val) if r_val is not None else 0.0
+        except (ValueError, TypeError):
+            continue
 
-    if num_val > 0:
-      m_key = (dt.year, dt.month)
-      if m_key not in daily_int_by_month:
-        daily_int_by_month[m_key] = []
-      daily_int_by_month[m_key].append(num_val)
+        if num_val > 0:
+            m_key = (dt.year, dt.month)
+            if m_key not in daily_int_by_month:
+                daily_int_by_month[m_key] = []
+            daily_int_by_month[m_key].append(num_val)
 
-  if not daily_int_by_month and movements:
-    for m in movements:
-      f_val = m["fecha"]
-      r_val = m["int_diario"]
-      if f_val is not None and r_val > 0:
-        dt = (
-            f_val
-            if hasattr(f_val, "year")
-            else pd.to_datetime(f_val, dayfirst=True)
-        )
-        m_key = (dt.year, dt.month)
-        if m_key not in daily_int_by_month:
-          daily_int_by_month[m_key] = []
-        daily_int_by_month[m_key].append(r_val)
+    if not daily_int_by_month and movements:
+        for m in movements:
+            f_val = m['fecha']
+            r_val = m['int_diario']
+            if f_val is not None and r_val > 0:
+                dt = f_val if hasattr(f_val, 'year') else pd.to_datetime(f_val, dayfirst=True)
+                m_key = (dt.year, dt.month)
+                if m_key not in daily_int_by_month:
+                    daily_int_by_month[m_key] = []
+                daily_int_by_month[m_key].append(r_val)
 
-  avg_daily_dates = []
-  avg_daily_vals = []
+    avg_daily_dates = []
+    avg_daily_vals = []
 
-  for (year, month), vals in sorted(daily_int_by_month.items()):
-    start_month_str = f"01/{month:02d}/{year}"
-    avg_val = sum(vals) / len(vals) if vals else 0.0
-    avg_daily_dates.append(start_month_str)
-    avg_daily_vals.append(avg_val)
+    for (year, month), vals in sorted(daily_int_by_month.items()):
+        start_month_str = f"01/{month:02d}/{year}"
+        avg_val = sum(vals) / len(vals) if vals else 0.0
+        avg_daily_dates.append(start_month_str)
+        avg_daily_vals.append(avg_val)
 
-  cum_int_list = np.cumsum(chart_intereses).tolist() if chart_intereses else []
+    cum_int_list = np.cumsum(chart_intereses).tolist() if chart_intereses else []
 
-  # ---------------------------------------------------------
-  # CONSTRUCCIÓN DE FIGURAS PLOTLY PARA PESTAÑAS Y PDF
-  # ---------------------------------------------------------
-  h_int = max(380, len(chart_dates) * 32)
-  h_avg = max(380, len(avg_daily_dates) * 32)
+    # ---------------------------------------------------------
+    # CONSTRUCCIÓN DE FIGURAS PLOTLY PARA PESTAÑAS Y PDF
+    # ---------------------------------------------------------
+    h_int = max(380, len(chart_dates) * 32)
+    h_avg = max(380, len(avg_daily_dates) * 32)
 
-  # Figura 1: Interés Ganado Mensual
-  fig_int = None
-  if chart_intereses:
-    max_int = max(chart_intereses) if chart_intereses else 1.0
-    pos_int = [
-        "outside" if v < max_int * 0.35 else "inside" for v in chart_intereses
-    ]
-
-    fig_int = go.Figure()
-    fig_int.add_trace(
-        go.Bar(
+    # Figura 1: Interés Ganado Mensual
+    fig_int = None
+    if chart_intereses:
+        max_int = max(chart_intereses) if chart_intereses else 1.0
+        pos_int = ['outside' if v < max_int * 0.35 else 'inside' for v in chart_intereses]
+        
+        fig_int = go.Figure()
+        fig_int.add_trace(go.Bar(
             x=chart_intereses,
             y=chart_dates,
-            orientation="h",
-            marker_color="#EF4444",
-            text=[
-                f"${v:,.2f}"
-                .replace(".", "X")
-                .replace(",", ".")
-                .replace("X", ",")
-                for v in chart_intereses
-            ],
+            orientation='h',
+            marker_color='#EF4444',
+            text=[f"${v:,.2f}".replace(".", "X").replace(",", ".").replace("X", ",") for v in chart_intereses],
             textposition=pos_int,
             textfont=dict(size=11),
-            insidetextfont=dict(color="#FFFFFF"),
-            outsidetextfont=dict(color="#FAFAFA"),
-            hoverinfo="none",
+            insidetextfont=dict(color='#FFFFFF'),
+            outsidetextfont=dict(color='#FAFAFA'),
+            hoverinfo='none'
+        ))
+        fig_int.update_layout(
+            template="plotly_dark",
+            margin=dict(l=75, r=65, t=10, b=30),
+            height=h_int,
+            xaxis=dict(showgrid=True, gridcolor='#334155', title=""),
+            yaxis=dict(autorange="reversed", tickfont=dict(size=10, color='#CBD5E1')),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)"
         )
-    )
-    fig_int.update_layout(
-        template="plotly_dark",
-        margin=dict(l=75, r=65, t=10, b=30),
-        height=h_int,
-        xaxis=dict(showgrid=True, gridcolor="#334155", title=""),
-        yaxis=dict(
-            autorange="reversed", tickfont=dict(size=10, color="#CBD5E1")
-        ),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-    )
 
-  # Figura 2: Saldo Fin de Mes
-  fig_sal = None
-  if chart_saldos:
-    max_sal = max(chart_saldos) if chart_saldos else 1.0
-    pos_sal = [
-        "outside" if v < max_sal * 0.35 else "inside" for v in chart_saldos
-    ]
+    # Figura 2: Saldo Fin de Mes
+    fig_sal = None
+    if chart_saldos:
+        max_sal = max(chart_saldos) if chart_saldos else 1.0
+        pos_sal = ['outside' if v < max_sal * 0.35 else 'inside' for v in chart_saldos]
 
-    fig_sal = go.Figure()
-    fig_sal.add_trace(
-        go.Bar(
+        fig_sal = go.Figure()
+        fig_sal.add_trace(go.Bar(
             x=chart_saldos,
             y=chart_dates,
-            orientation="h",
-            marker_color="#3B82F6",
-            text=[
-                f"${v:,.2f}"
-                .replace(".", "X")
-                .replace(",", ".")
-                .replace("X", ",")
-                for v in chart_saldos
-            ],
+            orientation='h',
+            marker_color='#3B82F6',
+            text=[f"${v:,.2f}".replace(".", "X").replace(",", ".").replace("X", ",") for v in chart_saldos],
             textposition=pos_sal,
             textfont=dict(size=10),
-            insidetextfont=dict(color="#FFFFFF"),
-            outsidetextfont=dict(color="#FAFAFA"),
-            hoverinfo="none",
+            insidetextfont=dict(color='#FFFFFF'),
+            outsidetextfont=dict(color='#FAFAFA'),
+            hoverinfo='none'
+        ))
+        fig_sal.update_layout(
+            template="plotly_dark",
+            margin=dict(l=75, r=65, t=10, b=30),
+            height=h_int,
+            xaxis=dict(showgrid=True, gridcolor='#334155', title=""),
+            yaxis=dict(autorange="reversed", tickfont=dict(size=10, color='#CBD5E1')),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)"
         )
-    )
-    fig_sal.update_layout(
-        template="plotly_dark",
-        margin=dict(l=75, r=65, t=10, b=30),
-        height=h_int,
-        xaxis=dict(showgrid=True, gridcolor="#334155", title=""),
-        yaxis=dict(
-            autorange="reversed", tickfont=dict(size=10, color="#CBD5E1")
-        ),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-    )
 
-  # Figura 3: Interés Diario Promedio
-  fig_avg = None
-  if avg_daily_vals:
-    max_avg = max(avg_daily_vals) if avg_daily_vals else 1.0
-    pos_avg = [
-        "outside" if v < max_avg * 0.35 else "inside" for v in avg_daily_vals
-    ]
+    # Figura 3: Interés Diario Promedio
+    fig_avg = None
+    if avg_daily_vals:
+        max_avg = max(avg_daily_vals) if avg_daily_vals else 1.0
+        pos_avg = ['outside' if v < max_avg * 0.35 else 'inside' for v in avg_daily_vals]
 
-    fig_avg = go.Figure()
-    fig_avg.add_trace(
-        go.Bar(
+        fig_avg = go.Figure()
+        fig_avg.add_trace(go.Bar(
             x=avg_daily_vals,
             y=avg_daily_dates,
-            orientation="h",
-            marker_color="#22C55E",
-            text=[
-                f"${v:,.2f}"
-                .replace(".", "X")
-                .replace(",", ".")
-                .replace("X", ",")
-                for v in avg_daily_vals
-            ],
+            orientation='h',
+            marker_color='#22C55E',
+            text=[f"${v:,.2f}".replace(".", "X").replace(",", ".").replace("X", ",") for v in avg_daily_vals],
             textposition=pos_avg,
             textfont=dict(size=11),
-            insidetextfont=dict(color="#FFFFFF"),
-            outsidetextfont=dict(color="#FAFAFA"),
-            hoverinfo="none",
+            insidetextfont=dict(color='#FFFFFF'),
+            outsidetextfont=dict(color='#FAFAFA'),
+            hoverinfo='none'
+        ))
+        fig_avg.update_layout(
+            template="plotly_dark",
+            margin=dict(l=75, r=65, t=10, b=30),
+            height=h_avg,
+            xaxis=dict(showgrid=True, gridcolor='#334155', title=""),
+            yaxis=dict(autorange="reversed", tickfont=dict(size=10, color='#CBD5E1')),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)"
         )
-    )
-    fig_avg.update_layout(
-        template="plotly_dark",
-        margin=dict(l=75, r=65, t=10, b=30),
-        height=h_avg,
-        xaxis=dict(showgrid=True, gridcolor="#334155", title=""),
-        yaxis=dict(
-            autorange="reversed", tickfont=dict(size=10, color="#CBD5E1")
-        ),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-    )
 
-  # Figura 4: Interés Acumulado Creciente
-  fig_cum = None
-  if chart_saldos and chart_intereses:
-    cum_int = np.cumsum(chart_intereses).tolist()
-    max_cum = max(cum_int) if cum_int else 1.0
-    pos_cum = ["outside" if v < max_cum * 0.35 else "inside" for v in cum_int]
-    labels_cum = [
-        f"${v:,.2f}".replace(".", "X").replace(",", ".").replace("X", ",")
-        for v in cum_int
-    ]
+    # Figura 4: Interés Acumulado Creciente
+    fig_cum = None
+    if chart_saldos and chart_intereses:
+        cum_int = np.cumsum(chart_intereses).tolist()
+        max_cum = max(cum_int) if cum_int else 1.0
+        pos_cum = ['outside' if v < max_cum * 0.35 else 'inside' for v in cum_int]
+        labels_cum = [
+            f"${v:,.2f}".replace(".", "X").replace(",", ".").replace("X", ",")
+            for v in cum_int
+        ]
 
-    fig_cum = go.Figure()
-    fig_cum.add_trace(
-        go.Bar(
+        fig_cum = go.Figure()
+        fig_cum.add_trace(go.Bar(
             x=cum_int,
             y=chart_dates,
-            orientation="h",
-            marker_color="#10B981",
+            orientation='h',
+            marker_color='#10B981',
             text=labels_cum,
             textposition=pos_cum,
             textfont=dict(size=11),
-            insidetextfont=dict(color="#FFFFFF"),
-            outsidetextfont=dict(color="#FAFAFA"),
-            hoverinfo="none",
+            insidetextfont=dict(color='#FFFFFF'),
+            outsidetextfont=dict(color='#FAFAFA'),
+            hoverinfo='none'
+        ))
+        fig_cum.update_layout(
+            template="plotly_dark",
+            margin=dict(l=75, r=85, t=10, b=30),
+            height=h_int,
+            xaxis=dict(showgrid=True, gridcolor='#334155', title=""),
+            yaxis=dict(autorange="reversed", tickfont=dict(size=10, color='#CBD5E1')),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)"
         )
-    )
-    fig_cum.update_layout(
-        template="plotly_dark",
-        margin=dict(l=75, r=85, t=10, b=30),
-        height=h_int,
-        xaxis=dict(showgrid=True, gridcolor="#334155", title=""),
-        yaxis=dict(
-            autorange="reversed", tickfont=dict(size=10, color="#CBD5E1")
-        ),
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
-    )
 
-  # ==============================================================================
-  # CONVERSIÓN DE GRÁFICOS A IMÁGENES PARA EL PDF
-  # ==============================================================================
-  graficos_list = []
-  b_int = obtener_bytes_grafico(fig_int, h_int)
-  if b_int:
-    graficos_list.append(("🔴 Interés Ganado Mensual", b_int, h_int))
+    # ==============================================================================
+    # CONVERSIÓN DE GRÁFICOS A IMÁGENES PARA EL PDF
+    # ==============================================================================
+    graficos_list = []
+    b_int = obtener_bytes_grafico(fig_int, h_int)
+    if b_int:
+        graficos_list.append(("🔴 Interés Ganado Mensual", b_int, h_int))
+    
+    b_sal = obtener_bytes_grafico(fig_sal, h_int)
+    if b_sal:
+        graficos_list.append(("🟦 Saldo Fin de Mes", b_sal, h_int))
 
-  b_sal = obtener_bytes_grafico(fig_sal, h_int)
-  if b_sal:
-    graficos_list.append(("🟦 Saldo Fin de Mes", b_sal, h_int))
+    b_avg = obtener_bytes_grafico(fig_avg, h_avg)
+    if b_avg:
+        graficos_list.append(("🟢 Interés Diario Promedio", b_avg, h_avg))
 
-  b_avg = obtener_bytes_grafico(fig_avg, h_avg)
-  if b_avg:
-    graficos_list.append(("🟢 Interés Diario Promedio", b_avg, h_avg))
+    b_cum = obtener_bytes_grafico(fig_cum, h_int)
+    if b_cum:
+        graficos_list.append(("📈 Interés Acumulado Creciente", b_cum, h_int))
 
-  b_cum = obtener_bytes_grafico(fig_cum, h_int)
-  if b_cum:
-    graficos_list.append(("📈 Interés Acumulado Creciente", b_cum, h_int))
+    graficos_bytes_tuple = tuple(graficos_list)
 
-  graficos_bytes_tuple = tuple(graficos_list)
-
-  # ==============================================================================
-  # EXPORTACIÓN PDF OPTIMIZADA CON CACHÉ
-  # ==============================================================================
-  datos_pdf_condiciones = (
-      ("Tasa Nominal Anual", f"{tna_val:.2f}%"),
-      ("Tasa Diaria", val_diaria_str),
-      ("Fecha Inicio", fecha_ini_str),
-      ("Plazo Meses", str(plazo_meses)),
-      ("Fecha Fin", fecha_fin_str),
-      ("Total de Días", str(total_dias)),
-      ("Valor Aporte Mensual", f"${val_aporte_str}"),
-      ("Día de Aporte Mensual", str(dia_aporte)),
-      ("Meses y Días Reales", f"{meses_real} Meses, {dias_real} Días"),
-  )
-
-  datos_pdf_kpi_res = (
-      ("Total Interés Ganados", fmt_moneda(d2)),
-      ("Total Depósitos Mensuales", fmt_moneda(d3)),
-      ("Total Depósitos Personales", fmt_moneda(d4)),
-      ("Total Depositado (sin Int.)", fmt_moneda(d5)),
-      ("Total Ganado Incluido Intereses", fmt_moneda(d6)),
-  )
-
-  datos_pdf_kpi_rend = (
-      ("TIR (Tasa Int. Retorno)", fmt_porcentaje(b7)),
-      ("TEA (Tasa Efe. Anual)", fmt_porcentaje(tea_calc)),
-      ("ROI Rentabilidad Acumulada", fmt_porcentaje(d7)),
-      ("Ratio de Ganancia", fmt_porcentaje(ratio_ganancia_calc)),
-      ("Interés sobre Interés", fmt_moneda(interes_compuesto_calc)),
-      ("Retorno por cada $100 (ROI)", retorno_100_val),
-      ("Ganancia por $100 del Fondo (Ratio)", ratio_100_val),
-      ("Productividad por $1.000", f"{fmt_moneda(prod_diaria_1000)} / día"),
-      ("Saldo Fin Mes Prom. Pond.", fmt_moneda(d16)),
-      ("Aportes Personales Prom.", fmt_moneda(d19)),
-      ("Interés Diario Promedio", fmt_moneda(b19)),
-  )
-
-  evolucion_mensual_pdf = tuple(
-      {
-          "fecha": chart_dates[idx],
-          "saldo": fmt_moneda(
-              chart_saldos[idx] if idx < len(chart_saldos) else 0.0
-          ),
-          "int_mensual": fmt_moneda(
-              chart_intereses[idx] if idx < len(chart_intereses) else 0.0
-          ),
-          "int_diario_prom": fmt_moneda(
-              avg_daily_vals[idx] if idx < len(avg_daily_vals) else 0.0
-          ),
-          "int_acumulado": fmt_moneda(
-              cum_int_list[idx] if idx < len(cum_int_list) else 0.0
-          ),
-      }
-      for idx in range(len(chart_dates))
-  )
-
-  movimientos_pdf_lista = tuple(
-      {
-          "dt_str": (
-              m["fecha"].strftime("%d/%m/%Y")
-              if hasattr(m["fecha"], "strftime")
-              else str(m["fecha"])
-          ),
-          "dep_m_str": fmt_moneda(m["dep_m"]) if m["dep_m"] > 0 else "$0,00",
-          "dep_p_str": fmt_moneda(m["dep_p"]) if m["dep_p"] > 0 else "$0,00",
-          "saldo_str": fmt_moneda(m["saldo_acum"]),
-          "int_d_str": f"${m['int_diario']:.2f}".replace(".", ","),
-          "int_m_str": (
-              fmt_moneda(m["int_m"]) if m["int_m"] is not None else ""
-          ),
-      }
-      for m in movements
-  )
-
-  pdf_bytes = generar_pdf_reporte_cached(
-      datos_pdf_condiciones,
-      datos_pdf_kpi_res,
-      datos_pdf_kpi_rend,
-      movimientos_pdf_lista,
-      evolucion_mensual_pdf,
-      graficos_bytes_tuple,
-  )
-
-  with col_btn2:
-    nombre_pdf = "Prgrmado. 25-26.pdf"
-    st.download_button(
-        label="📄 PDF",
-        data=pdf_bytes,
-        file_name=nombre_pdf,
-        mime="application/pdf",
-        use_container_width=True,
+    # ==============================================================================
+    # EXPORTACIÓN PDF OPTIMIZADA CON CACHÉ
+    # ==============================================================================
+    datos_pdf_condiciones = (
+        ("Tasa Nominal Anual", f"{tna_val:.2f}%"),
+        ("Tasa Diaria", val_diaria_str),
+        ("Fecha Inicio", fecha_ini_str),
+        ("Plazo Meses", str(plazo_meses)),
+        ("Fecha Fin", fecha_fin_str),
+        ("Total de Días", str(total_dias)),
+        ("Valor Aporte Mensual", f"${val_aporte_str}"),
+        ("Día de Aporte Mensual", str(dia_aporte)),
+        ("Meses y Días Reales", f"{meses_real} Meses, {dias_real} Días")
     )
 
-  # 4.3 CREACIÓN DE PESTAÑAS Y GRÁFICOS
-  tab_int, tab_saldo, tab_avg, tab_cum = st.tabs([
-      "🔴 Interés Ganado Mensual",
-      "🟦 Saldo Fin de Mes",
-      "🟢 Interés Diario Promedio",
-      "📈 Interés Acumulado Creciente",
-  ])
+    datos_pdf_kpi_res = (
+        ("Total Interés Ganados", fmt_moneda(d2)),
+        ("Total Depósitos Mensuales", fmt_moneda(d3)),
+        ("Total Depósitos Personales", fmt_moneda(d4)),
+        ("Total Depositado (sin Int.)", fmt_moneda(d5)),
+        ("Total Ganado Incluido Intereses", fmt_moneda(d6))
+    )
 
-  # PESTAÑA 1: INTERÉS GANADO MENSUAL
-  with tab_int:
-    if fig_int:
-      st.plotly_chart(
-          fig_int,
-          use_container_width=True,
-          config={"staticPlot": True, "displayModeBar": False},
-      )
+    datos_pdf_kpi_rend = (
+        ("TIR (Tasa Int. Retorno)", fmt_porcentaje(b7)),
+        ("TEA (Tasa Efe. Anual)", fmt_porcentaje(tea_calc)),
+        ("ROI Rentabilidad Acumulada", fmt_porcentaje(d7)),
+        ("Ratio de Ganancia", fmt_porcentaje(ratio_ganancia_calc)),
+        ("Interés sobre Interés", fmt_moneda(interes_compuesto_calc)),
+        ("Retorno por cada $100 (ROI)", retorno_100_val),
+        ("Ganancia por $100 del Fondo (Ratio)", ratio_100_val),
+        ("Productividad por $1.000", f"{fmt_moneda(prod_diaria_1000)} / día"),
+        ("Saldo Fin Mes Prom. Pond.", fmt_moneda(d16)),
+        ("Aportes Personales Prom.", fmt_moneda(d19)),
+        ("Interés Diario Promedio", fmt_moneda(b19))
+    )
 
-  # PESTAÑA 2: SALDO FIN DE MES
-  with tab_saldo:
-    if fig_sal:
-      st.plotly_chart(
-          fig_sal,
-          use_container_width=True,
-          config={"staticPlot": True, "displayModeBar": False},
-      )
+    evolucion_mensual_pdf = tuple(
+        {
+            "fecha": chart_dates[idx],
+            "saldo": fmt_moneda(chart_saldos[idx] if idx < len(chart_saldos) else 0.0),
+            "int_mensual": fmt_moneda(chart_intereses[idx] if idx < len(chart_intereses) else 0.0),
+            "int_diario_prom": fmt_moneda(avg_daily_vals[idx] if idx < len(avg_daily_vals) else 0.0),
+            "int_acumulado": fmt_moneda(cum_int_list[idx] if idx < len(cum_int_list) else 0.0)
+        }
+        for idx in range(len(chart_dates))
+    )
 
-  # PESTAÑA 3: INTERÉS DIARIO PROMEDIO
-  with tab_avg:
-    if fig_avg:
-      st.plotly_chart(
-          fig_avg,
-          use_container_width=True,
-          config={"staticPlot": True, "displayModeBar": False},
-      )
+    movimientos_pdf_lista = tuple(
+        {
+            "dt_str": m['fecha'].strftime('%d/%m/%Y') if hasattr(m['fecha'], 'strftime') else str(m['fecha']),
+            "dep_m_str": fmt_moneda(m['dep_m']) if m['dep_m'] > 0 else "$0,00",
+            "dep_p_str": fmt_moneda(m['dep_p']) if m['dep_p'] > 0 else "$0,00",
+            "saldo_str": fmt_moneda(m['saldo_acum']),
+            "int_d_str": f"${m['int_diario']:.2f}".replace(".", ","),
+            "int_m_str": fmt_moneda(m['int_m']) if m['int_m'] is not None else ""
+        }
+        for m in movements
+    )
 
-  # PESTAÑA 4: INTERÉS ACUMULADO CRECIENTE
-  with tab_cum:
-    if fig_cum:
-      st.plotly_chart(
-          fig_cum,
-          use_container_width=True,
-          config={"staticPlot": True, "displayModeBar": False},
-      )
+    pdf_bytes = generar_pdf_reporte_cached(
+        datos_pdf_condiciones,
+        datos_pdf_kpi_res,
+        datos_pdf_kpi_rend,
+        movimientos_pdf_lista,
+        evolucion_mensual_pdf,
+        graficos_bytes_tuple
+    )
+
+    with col_btn2:
+        nombre_pdf = "Prgrmado. 25-26.pdf"
+        st.download_button(
+            label="📄 PDF",
+            data=pdf_bytes,
+            file_name=nombre_pdf,
+            mime="application/pdf",
+            use_container_width=True
+        )
+
+    # 4.3 CREACIÓN DE PESTAÑAS Y GRÁFICOS
+    tab_int, tab_saldo, tab_avg, tab_cum = st.tabs([
+        "🔴 Interés Ganado Mensual", 
+        "🟦 Saldo Fin de Mes", 
+        "🟢 Interés Diario Promedio",
+        "📈 Interés Acumulado Creciente"
+    ])
+
+    # PESTAÑA 1: INTERÉS GANADO MENSUAL
+    with tab_int:
+        if fig_int:
+            st.plotly_chart(
+                fig_int, 
+                use_container_width=True, 
+                config={'staticPlot': True, 'displayModeBar': False}
+            )
+
+    # PESTAÑA 2: SALDO FIN DE MES
+    with tab_saldo:
+        if fig_sal:
+            st.plotly_chart(
+                fig_sal, 
+                use_container_width=True, 
+                config={'staticPlot': True, 'displayModeBar': False}
+            )
+
+    # PESTAÑA 3: INTERÉS DIARIO PROMEDIO
+    with tab_avg:
+        if fig_avg:
+            st.plotly_chart(
+                fig_avg, 
+                use_container_width=True, 
+                config={'staticPlot': True, 'displayModeBar': False}
+            )
+
+    # PESTAÑA 4: INTERÉS ACUMULADO CRECIENTE
+    with tab_cum:
+        if fig_cum:
+            st.plotly_chart(
+                fig_cum, 
+                use_container_width=True, 
+                config={'staticPlot': True, 'displayModeBar': False}
+            )
