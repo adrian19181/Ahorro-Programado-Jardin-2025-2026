@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, HRFlowable
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 
 # ==============================================================================
 # AUTORUNNER: FUNCIONA TANTO LOCALMENTE COMO EN STREAMLIT CLOUD
@@ -75,28 +75,11 @@ def fmt_porcentaje(val):
     except:
         return str(val)
 
-def obtener_bytes_grafico(fig, height_val=380):
-    if fig is None:
-        return None
-    try:
-        fig_pdf = go.Figure(fig)
-        fig_pdf.update_layout(
-            paper_bgcolor="#1F2937",
-            plot_bgcolor="#1F2937",
-            font=dict(color="#FFFFFF", family="sans-serif")
-        )
-        try:
-            return fig_pdf.to_image(format="png", width=700, height=height_val, scale=2, engine="kaleido")
-        except Exception:
-            return fig_pdf.to_image(format="png", width=700, height=height_val, scale=2)
-    except Exception:
-        return None
-
 # ==============================================================================
-# FUNCIÓN GENERADORA DE PDF CACHEADA (OPTIMIZA VELOCIDAD DE CARGA)
+# FUNCIÓN GENERADORA DE PDF CACHEADA (SOLO TABLAS COMPLETAS)
 # ==============================================================================
 @st.cache_data(ttl=600)
-def generar_pdf_reporte_cached(datos_condiciones, datos_kpi_res, datos_kpi_rend, movimientos_lista, evolucion_mensual, graficos_bytes=None):
+def generar_pdf_reporte_cached(datos_condiciones, datos_kpi_res, datos_kpi_rend, movimientos_lista, evolucion_mensual):
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -115,11 +98,10 @@ def generar_pdf_reporte_cached(datos_condiciones, datos_kpi_res, datos_kpi_rend,
     style_cell = ParagraphStyle('DocCell', parent=styles['Normal'], fontSize=7.5, leading=9, textColor=colors.HexColor('#000000'))
     style_cell_bold = ParagraphStyle('DocCellBold', parent=style_cell, fontName='Helvetica-Bold')
     style_cell_header = ParagraphStyle('DocCellHeader', parent=style_cell, fontName='Helvetica-Bold', textColor=colors.white, alignment=1)
-    style_sub_chart = ParagraphStyle('SubChart', parent=styles['Normal'], fontSize=9, leading=11, textColor=colors.HexColor('#0F172A'), spaceBefore=6, spaceAfter=4)
 
     fecha_hoy = datetime.date.today().strftime('%d/%m/%Y')
     story.append(Paragraph("💰 Ahorro Programado Jardín 2025-2026", style_title))
-    story.append(Paragraph(f"Reporte Consolidado de Datos, Rendimientos y Gráficos | Fecha de exportación: {fecha_hoy}", style_sub))
+    story.append(Paragraph(f"Reporte Consolidado de Datos y Rendimientos | Fecha de exportación: {fecha_hoy}", style_sub))
 
     # 1. CONDICIONES
     story.append(Paragraph("📋 1. Condiciones del Ahorro Programado", style_h2))
@@ -169,7 +151,7 @@ def generar_pdf_reporte_cached(datos_condiciones, datos_kpi_res, datos_kpi_rend,
     story.append(t_rend)
     story.append(Spacer(1, 8))
 
-    # 4. EVOLUCIÓN MENSUAL (DATOS DE GRÁFICOS)
+    # 4. EVOLUCIÓN MENSUAL DE SALDOS E INTERESES
     story.append(Paragraph("📉 4. Evolución Mensual de Saldos e Intereses", style_h2))
     t_ev_data = [[
         Paragraph("Fecha", style_cell_header),
@@ -225,20 +207,6 @@ def generar_pdf_reporte_cached(datos_condiciones, datos_kpi_res, datos_kpi_rend,
         ('BOTTOMPADDING', (0,0), (-1,-1), 2.5),
     ]))
     story.append(t_mov)
-    story.append(Spacer(1, 10))
-
-    # 6. SECCIÓN DE GRÁFICOS
-    if graficos_bytes:
-        story.append(Paragraph("📊 6. Gráficos de Evolución y Rendimientos", style_h2))
-        story.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#1E3A8A'), spaceBefore=2, spaceAfter=8))
-        for titulo, b_img, h_px in graficos_bytes:
-            if b_img:
-                story.append(Paragraph(f"<b>{titulo}</b>", style_sub_chart))
-                img_stream = io.BytesIO(b_img)
-                calc_h = min(400, 540 * (h_px / 700))
-                img_flowable = Image(img_stream, width=540, height=calc_h)
-                story.append(img_flowable)
-                story.append(Spacer(1, 10))
 
     doc.build(story)
     buffer.seek(0)
@@ -804,7 +772,7 @@ if wb is not None:
     st.divider()
 
     # ==============================================================================
-    # 4. SECCIÓN DE GRÁFICOS HORIZONTALES INTELIGENTES 100% ADAPTADOS A MÓVIL
+    # 4. SECCIÓN DE GRÁFICOS HORIZONTALES INTELIGENTES EN PESTAÑAS (WEB)
     # ==============================================================================
     st.subheader("📊 Evolución de Saldo e Intereses Mensuales")
 
@@ -881,7 +849,7 @@ if wb is not None:
     cum_int_list = np.cumsum(chart_intereses).tolist() if chart_intereses else []
 
     # ---------------------------------------------------------
-    # CONSTRUCCIÓN DE FIGURAS PLOTLY PARA PESTAÑAS Y PDF
+    # CONSTRUCCIÓN DE FIGURAS PLOTLY PARA LAS PESTAÑAS WEB
     # ---------------------------------------------------------
     h_int = max(380, len(chart_dates) * 32)
     h_avg = max(380, len(avg_daily_dates) * 32)
@@ -1008,29 +976,7 @@ if wb is not None:
         )
 
     # ==============================================================================
-    # CONVERSIÓN DE GRÁFICOS A IMÁGENES PARA EL PDF
-    # ==============================================================================
-    graficos_list = []
-    b_int = obtener_bytes_grafico(fig_int, h_int)
-    if b_int:
-        graficos_list.append(("🔴 Interés Ganado Mensual", b_int, h_int))
-    
-    b_sal = obtener_bytes_grafico(fig_sal, h_int)
-    if b_sal:
-        graficos_list.append(("🟦 Saldo Fin de Mes", b_sal, h_int))
-
-    b_avg = obtener_bytes_grafico(fig_avg, h_avg)
-    if b_avg:
-        graficos_list.append(("🟢 Interés Diario Promedio", b_avg, h_avg))
-
-    b_cum = obtener_bytes_grafico(fig_cum, h_int)
-    if b_cum:
-        graficos_list.append(("📈 Interés Acumulado Creciente", b_cum, h_int))
-
-    graficos_bytes_tuple = tuple(graficos_list)
-
-    # ==============================================================================
-    # EXPORTACIÓN PDF OPTIMIZADA CON CACHÉ
+    # EXPORTACIÓN PDF (SOLO TABLAS COMPLETAS)
     # ==============================================================================
     datos_pdf_condiciones = (
         ("Tasa Nominal Anual", f"{tna_val:.2f}%"),
@@ -1094,8 +1040,7 @@ if wb is not None:
         datos_pdf_kpi_res,
         datos_pdf_kpi_rend,
         movimientos_pdf_lista,
-        evolucion_mensual_pdf,
-        graficos_bytes_tuple
+        evolucion_mensual_pdf
     )
 
     with col_btn2:
@@ -1108,7 +1053,7 @@ if wb is not None:
             use_container_width=True
         )
 
-    # 4.3 CREACIÓN DE PESTAÑAS Y GRÁFICOS
+    # CREACIÓN DE PESTAÑAS DE GRÁFICOS (VISUALIZACIÓN WEB DE STREAMLIT)
     tab_int, tab_saldo, tab_avg, tab_cum = st.tabs([
         "🔴 Interés Ganado Mensual", 
         "🟦 Saldo Fin de Mes", 
@@ -1116,7 +1061,6 @@ if wb is not None:
         "📈 Interés Acumulado Creciente"
     ])
 
-    # PESTAÑA 1: INTERÉS GANADO MENSUAL
     with tab_int:
         if fig_int:
             st.plotly_chart(
@@ -1125,7 +1069,6 @@ if wb is not None:
                 config={'staticPlot': True, 'displayModeBar': False}
             )
 
-    # PESTAÑA 2: SALDO FIN DE MES
     with tab_saldo:
         if fig_sal:
             st.plotly_chart(
@@ -1134,7 +1077,6 @@ if wb is not None:
                 config={'staticPlot': True, 'displayModeBar': False}
             )
 
-    # PESTAÑA 3: INTERÉS DIARIO PROMEDIO
     with tab_avg:
         if fig_avg:
             st.plotly_chart(
@@ -1143,7 +1085,6 @@ if wb is not None:
                 config={'staticPlot': True, 'displayModeBar': False}
             )
 
-    # PESTAÑA 4: INTERÉS ACUMULADO CRECIENTE
     with tab_cum:
         if fig_cum:
             st.plotly_chart(
